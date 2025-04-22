@@ -39,7 +39,16 @@ lint:
 
 # Run the project with environment variables
 run-env:
-	CONFIG=config.yaml POSTGRES_USER=user POSTGRES_PASSWORD=password POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=db BLOCKCHAIN_SERVICE_URL=http://localhost:8545 SMART_CONTRACT_ADDRESS=0x1234567890abcdef DEVELOPMENT=true MINIMAL_BALANCE_FOR_NOTIF=0 $(GOBUILD) -o $(BINARY_NAME) -v ./cmd/nuntiare
+	CONFIG=config.yaml POSTGRES_USER=user POSTGRES_PASSWORD=password POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=db BLOCKCHAIN_SERVICE_URL=http://localhost:8545 SMART_CONTRACT_ADDRESS=0x1234567890abcdef DEVELOPMENT=true $(GOBUILD) -o $(BINARY_NAME) -v ./cmd/nuntiare
 	./$(BINARY_NAME)
 
-.PHONY: build run test clean fmt lint run-env
+# Load environment variables from .env and run docker-compose
+docker-run:
+	test -f .env && docker-compose --env-file .env up -d || echo ".env file not found"
+
+docker-down:
+	docker-compose down
+
+docker-build:
+	docker-compose build
+.PHONY: build run test clean fmt lint run-env docker-run

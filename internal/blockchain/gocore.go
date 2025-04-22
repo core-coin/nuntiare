@@ -69,7 +69,7 @@ func (g *Gocore) BuildBindings() error {
 }
 
 func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
-	channel := make(chan *types.Header)
+	channel := make(chan *types.Header, 300)
 
 	subscription, err := g.client.SubscribeNewHead(context.Background(), channel)
 	if err != nil {

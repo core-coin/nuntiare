@@ -23,10 +23,23 @@ type Wallet struct {
 }
 
 type SubscriptionPayment struct {
+	// ID is the unique identifier for the payment.
+	ID int64 `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	// Address is the address of the wallet.
-	Address string `json:"address" gorm:"column:address;primaryKey"`
+	Address string `json:"address" gorm:"column:address"`
 	// Amount is the amount of CTN paid for the subscription.
-	Amount int64 `json:"amount" gorm:"column:amount"`
+	Amount float64 `json:"amount" gorm:"column:amount"`
 	// Timestamp is the date when the payment was made.
 	Timestamp int64 `json:"timestamp" gorm:"column:timestamp"`
+}
+
+type NotificationProvider struct {
+	// ID is the unique identifier for the notification service.
+	ID int64 `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	// Address is the address of the wallet.
+	Address string `json:"address" gorm:"column:address"`
+	// Service is the name of the notification provider.
+	Type string `json:"type" gorm:"column:type"`
+	// Username is the username in the notification provider. (username in telegram, email etc.)
+	Username string `json:"username" gorm:"column:username"`
 }

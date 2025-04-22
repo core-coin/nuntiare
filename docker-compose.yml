@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   nuntiare:
     build: .
     ports:
-      - "8080:8080"
+      - "6532:6532"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -14,7 +12,6 @@ services:
       - BLOCKCHAIN_SERVICE_URL=${BLOCKCHAIN_SERVICE_URL}
       - SMART_CONTRACT_ADDRESS=${SMART_CONTRACT_ADDRESS}
       - DEVELOPMENT=${DEVELOPMENT}
-      - MINIMAL_BALANCE_FOR_NOTIF=${MINIMAL_BALANCE_FOR_NOTIF}
     depends_on:
       - postgres
 

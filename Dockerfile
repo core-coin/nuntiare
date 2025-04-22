@@ -1,5 +1,8 @@
 # Use the official Golang image as the base image
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
+
+# Add necessary packages
+RUN apk add make gcc g++ musl-dev linux-headers git
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
@@ -18,6 +21,9 @@ RUN go build -o nuntiare ./cmd/nuntiare
 
 # Start a new stage from scratch
 FROM alpine:latest
+
+# Add necessary packages
+RUN apk add make gcc g++ musl-dev linux-headers git
 
 # Set the Current Working Directory inside the container
 WORKDIR /root/

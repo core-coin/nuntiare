@@ -21,16 +21,16 @@ const (
 	transferFrom = "31f2e679"
 
 	// Official Core Token contract address
-	CTNAddress = "cb19c7acc4c292d2943ba23c2eaa5d9c5a6652a8710c"
+	CTNAddress = "ab7935cdef94ac9e6bcbcf779277aad7025993bc1964"
 )
 
 type Transfer struct {
 	From   string
 	To     string
-	Amount big.Int
+	Amount float64
 }
 
-var signer = types.NewNucleusSigner(big.NewInt(1))
+var signer = types.NewNucleusSigner(big.NewInt(common.Devin))
 
 func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 	receiver := tx.To().Hex()
@@ -43,13 +43,14 @@ func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 		return nil, nil
 	}
 
-	switch input[:10] {
+	switch input[:8] {
 	case transfer:
+		amount, _ := big.NewFloat(0).Quo(new(big.Float).SetInt(big.NewInt(0).SetBytes(common.Hex2Bytes(input[72:136]))), big.NewFloat(1e18)).Float64()
 		return []*Transfer{
 			{
 				From:   sender.Hex(),
 				To:     input[28:72],
-				Amount: *new(big.Int).SetBytes(common.Hex2Bytes(input[72:136])), // todo:error2215 check if it is correct
+				Amount: amount, // todo:error2215 check if it is correct
 			},
 		}, nil
 	case batchTransfer:
@@ -62,19 +63,21 @@ func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 		for i := 0; i < int(count.Int64()); i++ {
 			to := input[offset+84+i*64 : offset+128+i*64]
 			value := input[offset+128+int(count.Int64())*64+i*64 : offset+192+int(count.Int64())*64+i*64]
+			amount, _ := big.NewFloat(0).Quo(new(big.Float).SetInt(big.NewInt(0).SetBytes(common.Hex2Bytes(value))), big.NewFloat(1e18)).Float64()
 			transfers = append(transfers, &Transfer{
 				From:   sender.Hex(),
 				To:     to,
-				Amount: *new(big.Int).SetBytes(common.Hex2Bytes(value)),
+				Amount: amount,
 			})
 		}
 		return transfers, nil
 	case transferFrom:
+		amount, _ := big.NewFloat(0).Quo(new(big.Float).SetInt(big.NewInt(0).SetBytes(common.Hex2Bytes(input[136:200]))), big.NewFloat(1e18)).Float64()
 		return []*Transfer{
 			{
 				From:   input[28:72],
 				To:     input[92:136],
-				Amount: *new(big.Int).SetBytes(common.Hex2Bytes(input[136:200])), // todo:error2215 check if it is correct
+				Amount: amount, // todo:error2215 check if it is correct
 			},
 		}, nil
 	}

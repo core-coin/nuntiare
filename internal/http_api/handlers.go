@@ -12,7 +12,8 @@ import (
 
 // register is a handler for the /register endpoint.
 func (s *HTTPServer) register(c *gin.Context) {
-	// id -> serialNumber: `${origin}-${subscriptionAddress}-${props.destination}-${new Date(Date.now()).toISOString().replace(/[-T:]/g, '').slice(0, 12)}`
+	// id -> serialNumber: `${origin}-${subscriptionAddress}-${props.destination}-${walletType}-${network}-${date}`
+	// example: `origin-subscriptionAddress-monitorAddress-ican-xcb-2503071030-0500`
 	id := c.PostForm("id")
 	url, err := url.Parse(c.PostForm("url"))
 	if err != nil {
@@ -23,12 +24,13 @@ func (s *HTTPServer) register(c *gin.Context) {
 	monitorAddress := strings.Split(id, "-")[2]
 	walletType := strings.Split(id, "-")[3]
 	network := strings.Split(id, "-")[4]
-	dateStr := strings.Split(id, "-")[5] // ISO date reformatted and timezone - example: 2503071030-0500
+	dateStr := strings.Split(id, "-")[5] // ISO date reformatted and timezone
 
 	// Parse the date string
 	date, err := time.Parse("0601021504-0700", dateStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format"})
+		s.logger.Debug("failed to parse date", "error", err)
 		return
 	}
 
@@ -41,6 +43,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 		WalletType:          walletType,
 		Network:             network,
 		CreatedAt:           date.Unix(),
+		Paid:                false,
 	})
 	if err != nil {
 		s.logger.Debug("failed to register wallet", "error", err)
@@ -56,7 +59,12 @@ func (s *HTTPServer) isSubscribed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "address is required"})
 		return
 	}
-	subscription, err := s.nuntiare.CheckWalletSubscription(&models.Wallet{Address: address})
+	wallet, err := s.nuntiare.GetWallet(address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get wallet"})
+		return
+	}
+	subscription, err := s.nuntiare.CheckWalletSubscription(wallet)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get subscription"})
 		return

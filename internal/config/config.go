@@ -9,15 +9,18 @@ import (
 )
 
 type Config struct {
-	Development            bool
-	PostgresUser           string
-	PostgresPassword       string
-	PostgresHost           string
-	PostgresPort           int
-	PostgresDB             string
-	SmartContractAddress   string
-	MinimalBalanceForNotif *big.Int
-	BlockchainServiceURL   string
+	Development bool
+	// API configuration
+	APIPort int
+	// Postgres configuration
+	PostgresUser     string
+	PostgresPassword string
+	PostgresHost     string
+	PostgresPort     int
+	PostgresDB       string
+	// Blockchain configuration
+	SmartContractAddress string
+	BlockchainServiceURL string
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -26,15 +29,15 @@ func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		Development:            getEnvAsBool("DEVELOPMENT", false),
-		PostgresUser:           getEnv("POSTGRES_USER", "postgres"),
-		PostgresPassword:       getEnv("POSTGRES_PASSWORD", "password"),
-		PostgresHost:           getEnv("POSTGRES_HOST", "localhost"),
-		PostgresPort:           getEnvAsInt("POSTGRES_PORT", 5432),
-		PostgresDB:             getEnv("POSTGRES_DB", "nuntiare"),
-		SmartContractAddress:   getEnv("SMART_CONTRACT_ADDRESS", ""),
-		MinimalBalanceForNotif: getEnvAsBigInt("MINIMAL_BALANCE_FOR_NOTIF", big.NewInt(0)),
-		BlockchainServiceURL:   getEnv("BLOCKCHAIN_SERVICE_URL", "http://localhost:8545"),
+		Development:          getEnvAsBool("DEVELOPMENT", false),
+		PostgresUser:         getEnv("POSTGRES_USER", "postgres"),
+		PostgresPassword:     getEnv("POSTGRES_PASSWORD", "password"),
+		PostgresHost:         getEnv("POSTGRES_HOST", "localhost"),
+		PostgresPort:         getEnvAsInt("POSTGRES_PORT", 5432),
+		PostgresDB:           getEnv("POSTGRES_DB", "nuntiare"),
+		SmartContractAddress: getEnv("SMART_CONTRACT_ADDRESS", ""),
+		BlockchainServiceURL: getEnv("BLOCKCHAIN_SERVICE_URL", "http://localhost:8545"),
+		APIPort:              getEnvAsInt("API_PORT", 6532),
 	}
 
 	return cfg, nil

@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 
+	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/nuntiare/internal/blockchain"
 	"github.com/core-coin/nuntiare/internal/config"
 	"github.com/core-coin/nuntiare/internal/http_api"
@@ -21,15 +21,19 @@ func main() {
 		Name:  "nuntiare",
 		Usage: "Nuntiare is a blockchain notification service",
 		Flags: []cli.Flag{
+			// Postgres configuration
 			&cli.StringFlag{Name: "postgres-user", Aliases: []string{"u"}, Usage: "Postgres user"},
 			&cli.StringFlag{Name: "postgres-password", Aliases: []string{"p"}, Usage: "Postgres password"},
 			&cli.StringFlag{Name: "postgres-host", Aliases: []string{"t"}, Usage: "Postgres host"},
 			&cli.IntFlag{Name: "postgres-port", Aliases: []string{"P"}, Usage: "Postgres port"},
 			&cli.StringFlag{Name: "postgres-db", Aliases: []string{"d"}, Usage: "Postgres database name"},
+			// Blockchain configuration
 			&cli.StringFlag{Name: "blockchain-service-url", Aliases: []string{"b"}, Usage: "Blockchain service URL"},
 			&cli.StringFlag{Name: "smart-contract-address", Aliases: []string{"s"}, Usage: "Smart contract address"},
+			// API configuration
+			&cli.IntFlag{Name: "api-port", Aliases: []string{"a"}, Usage: "API Server port"},
+			// Additional configuration
 			&cli.BoolFlag{Name: "development", Aliases: []string{"D"}, Usage: "Development mode"},
-			&cli.StringFlag{Name: "minimal-balance-for-notif", Aliases: []string{"m"}, Usage: "Minimal balance for notification"},
 		},
 		Action: func(c *cli.Context) error {
 			return run(c)
@@ -74,13 +78,11 @@ func run(c *cli.Context) error {
 	if c.IsSet("development") {
 		cfg.Development = c.Bool("development")
 	}
-	if c.IsSet("minimal-balance-for-notif") {
-		minimalBalance, ok := new(big.Int).SetString(c.String("minimal-balance-for-notif"), 10)
-		if ok {
-			cfg.MinimalBalanceForNotif = minimalBalance
-		}
+	if c.IsSet("api-port") {
+		cfg.APIPort = c.Int("api-port")
 	}
 
+	common.DefaultNetworkID = common.Devin
 	// Initialize logger
 	log, err := logger.NewLogger(cfg.Development)
 	if err != nil {
@@ -95,13 +97,15 @@ func run(c *cli.Context) error {
 
 	// Initialize blockchain service
 	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log)
+	blockchainService.Run()
+
 	// Initialize notificator
 	notificator := notificator.NewNotificator(log)
 	// Initialize API server
 	// Create Nuntiare instance
-	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log, cfg.MinimalBalanceForNotif)
+	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log)
 
-	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.BlockchainServiceURL)
+	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.APIPort, log)
 
 	go apiServer.Start()
 	// Start the application

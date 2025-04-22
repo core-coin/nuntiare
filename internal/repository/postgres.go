@@ -2,9 +2,13 @@ package repository
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
 
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
@@ -20,11 +24,24 @@ func NewPostgresDB(user, password, dbname, host string, port int, logger *logger
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable",
 		host, user, password, dbname, port)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Configure GORM logger to suppress "record not found" messages
+	gormLogger := gormLogger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags), // Use standard logger
+		gormLogger.Config{
+			SlowThreshold:             200 * time.Millisecond, // Log queries slower than this
+			LogLevel:                  gormLogger.Warn,        // Only log warnings or errors
+			IgnoreRecordNotFoundError: true,                   // Suppress "record not found" errors
+			Colorful:                  true,                   // Enable colorful logs
+		},
+	)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: gormLogger})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %s", err)
 	}
 
+	if err := db.AutoMigrate(&models.Wallet{}, &models.SubscriptionPayment{}, &models.NotificationProvider{}); err != nil {
+		return nil, fmt.Errorf("failed to auto-migrate models: %s", err)
+	}
 	logger.Info("Successfully connected to PostgreSQL!")
 	return &PostgresDB{Conn: db, logger: logger}, nil
 }
@@ -59,19 +76,20 @@ func (db *PostgresDB) CheckWalletExists(address string) (bool, error) {
 
 func (db *PostgresDB) GetWallet(address string) (*models.Wallet, error) {
 	var wallet models.Wallet
-	if err := db.Conn.Where("address = ?", wallet.Address).First(&wallet).Error; err != nil {
+	if err := db.Conn.Where("address = ?", address).First(&wallet).Error; err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %s", err)
 	}
 
 	return &wallet, nil
 }
 
-func (db *PostgresDB) AddSubscriptionPayment(subscriptionAddress string, amount int64, timestamp int64) error {
+func (db *PostgresDB) AddSubscriptionPayment(subscriptionAddress string, amount float64, timestamp int64) error {
 	payment := models.SubscriptionPayment{
 		Address:   subscriptionAddress,
 		Amount:    amount,
 		Timestamp: timestamp,
 	}
+	db.logger.Debug("Adding subscription payment ", "payment ", payment)
 	if err := db.Conn.Create(&payment).Error; err != nil {
 		return fmt.Errorf("failed to add subscription payment: %s", err)
 	}
@@ -113,4 +131,27 @@ func (db *PostgresDB) RemoveUnpaidSubscriptions(timestamp int64) error {
 	}
 
 	return nil
+}
+
+func (db *PostgresDB) UpdateWalletPaidStatus(address string, paid bool) error {
+	var wallet models.Wallet
+	if err := db.Conn.Where("address = ?", address).First(&wallet).Error; err != nil {
+		return fmt.Errorf("failed to get wallet: %s", err)
+	}
+
+	wallet.Paid = paid
+	if err := db.Conn.Save(&wallet).Error; err != nil {
+		return fmt.Errorf("failed to update wallet paid status: %s", err)
+	}
+
+	return nil
+}
+
+func (db *PostgresDB) GetWalletBySubscriptionAddress(subscriptionAddress string) (*models.Wallet, error) {
+	var wallet models.Wallet
+	if err := db.Conn.Where("subscription_address = ?", subscriptionAddress).First(&wallet).Error; err != nil {
+		return nil, fmt.Errorf("failed to get wallet by subscription address: %s", err)
+	}
+
+	return &wallet, nil
 }

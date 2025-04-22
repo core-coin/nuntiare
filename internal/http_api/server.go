@@ -1,6 +1,8 @@
 package http_api
 
 import (
+	"fmt"
+
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -13,21 +15,22 @@ type HTTPServer struct {
 
 	// router is the HTTP router
 	router *gin.Engine
-	// addr is the address the server will listen on
-	addr   string
+	// port is the port on which the server will listen
+	port int
 
 	// nuntiare is the main application struct
 	nuntiare models.NuntiareI
 }
 
 // NewHTTPServer creates a new HTTP server instance
-func NewHTTPServer(nuntiare models.NuntiareI, addr string) models.APIServer {
+func NewHTTPServer(nuntiare models.NuntiareI, port int, logger *logger.Logger) models.APIServer {
 	router := gin.Default()
 
 	server := &HTTPServer{
 		router:   router,
-		addr:     addr,
+		port:     port,
 		nuntiare: nuntiare,
+		logger:   logger,
 	}
 
 	// Define routes
@@ -38,7 +41,7 @@ func NewHTTPServer(nuntiare models.NuntiareI, addr string) models.APIServer {
 
 // Start starts the HTTP server
 func (s *HTTPServer) Start() {
-	if err := s.router.Run(s.addr); err != nil {
+	if err := s.router.Run(fmt.Sprintf("0.0.0.0:%v", s.port)); err != nil {
 		s.logger.Fatal("Failed to start the HTTP server: ", err)
 	}
 }
