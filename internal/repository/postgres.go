@@ -39,7 +39,7 @@ func NewPostgresDB(user, password, dbname, host string, port int, logger *logger
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %s", err)
 	}
 
-	if err := db.AutoMigrate(&models.Wallet{}, &models.SubscriptionPayment{}, &models.NotificationProvider{}); err != nil {
+	if err := db.AutoMigrate(&models.Wallet{}, &models.SubscriptionPayment{}, &models.NotificationProvider{}, &models.TelegramProvider{}, &models.EmailProvider{}); err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate models: %s", err)
 	}
 	logger.Info("Successfully connected to PostgreSQL!")
@@ -154,4 +154,44 @@ func (db *PostgresDB) GetWalletBySubscriptionAddress(subscriptionAddress string)
 	}
 
 	return &wallet, nil
+}
+
+func (db *PostgresDB) GetWalletsNotificationProvider(address string) (*models.NotificationProvider, error) {
+	var notificationProvider models.NotificationProvider
+	if err := db.Conn.Preload("TelegramProvider").Preload("EmailProvider").Where("address = ?", address).First(&notificationProvider).Error; err != nil {
+		return nil, fmt.Errorf("failed to get wallet's notification provider: %s", err)
+	}
+
+	return &notificationProvider, nil
+}
+
+func (db *PostgresDB) AddTelegramProviderChatID(address, chatID string) error {
+	var notificationProvider models.NotificationProvider
+	if err := db.Conn.Joins("TelegramProvider").Preload("TelegramProvider").Where("address = ?", address).First(&notificationProvider).Error; err != nil {
+		return fmt.Errorf("failed to get wallet's notification provider: %s", err)
+	}
+
+	telegramProvider := models.TelegramProvider{
+		NotificationProviderID: notificationProvider.ID,
+		ID:                     notificationProvider.TelegramProvider.ID,
+		Username:               notificationProvider.TelegramProvider.Username,
+		ChatID:                 chatID,
+	}
+	if err := db.Conn.Save(&telegramProvider).Error; err != nil {
+		return fmt.Errorf("failed to add telegram provider chat ID: %s", err)
+	}
+	return nil
+}
+
+func (db *PostgresDB) GetNotificationProviderByTelegramUsername(username string) (*models.NotificationProvider, error) {
+	var notificationProvider models.NotificationProvider
+	if err := db.Conn.Joins("JOIN telegram_providers ON telegram_providers.notification_provider_id = notification_providers.id").
+		Where("telegram_providers.username = ?", username).
+		Preload("TelegramProvider").
+		Preload("EmailProvider").
+		First(&notificationProvider).Error; err != nil {
+		return nil, fmt.Errorf("failed to get notification provider by telegram username: %s", err)
+	}
+
+	return &notificationProvider, nil
 }

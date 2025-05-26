@@ -2,8 +2,6 @@ package http_api
 
 import (
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/core-coin/nuntiare/internal/models"
@@ -12,38 +10,31 @@ import (
 
 // register is a handler for the /register endpoint.
 func (s *HTTPServer) register(c *gin.Context) {
-	// id -> serialNumber: `${origin}-${subscriptionAddress}-${props.destination}-${walletType}-${network}-${date}`
-	// example: `origin-subscriptionAddress-monitorAddress-ican-xcb-2503071030-0500`
-	id := c.PostForm("id")
-	url, err := url.Parse(c.PostForm("url"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
-	}
-	origin := strings.Split(id, "-")[0]
-	subscriptionAddress := strings.Split(id, "-")[1]
-	monitorAddress := strings.Split(id, "-")[2]
-	walletType := strings.Split(id, "-")[3]
-	network := strings.Split(id, "-")[4]
-	dateStr := strings.Split(id, "-")[5] // ISO date reformatted and timezone
+	originator := c.Query("originator")
+	subscriber := c.Query("subscriber")
+	destination := c.Query("destination")
+	network := c.Query("network")
+	telegram := c.Query("telegram")
+	email := c.Query("email")
 
-	// Parse the date string
-	date, err := time.Parse("0601021504-0700", dateStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format"})
-		s.logger.Debug("failed to parse date", "error", err)
-		return
+	notificationProvider := models.NotificationProvider{
+		TelegramProvider: models.TelegramProvider{
+			Username: telegram,
+		},
+		EmailProvider: models.EmailProvider{
+			Email: email,
+		},
+		Address: destination,
 	}
-
-	err = s.nuntiare.RegisterNewWallet(&models.Wallet{
-		Address:             monitorAddress,
-		SubscriptionAddress: subscriptionAddress,
-		HookURL:             url.String(),
-		Origin:              origin,
-		Whitelisted:         false,
-		WalletType:          walletType,
-		Network:             network,
-		CreatedAt:           date.Unix(),
-		Paid:                false,
+	err := s.nuntiare.RegisterNewWallet(&models.Wallet{
+		Address:              destination,
+		SubscriptionAddress:  subscriber,
+		Originator:           originator,
+		Whitelisted:          false,
+		Network:              network,
+		CreatedAt:            time.Now().Unix(),
+		Paid:                 false,
+		NotificationProvider: notificationProvider,
 	})
 	if err != nil {
 		s.logger.Debug("failed to register wallet", "error", err)

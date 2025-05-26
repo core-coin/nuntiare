@@ -21,6 +21,18 @@ type Config struct {
 	// Blockchain configuration
 	SmartContractAddress string
 	BlockchainServiceURL string
+	NetworkID            *big.Int
+
+	// SMTP configuration
+	SMTPHost            string
+	SMTPPort            int
+	SMTPAlternativePort int
+	SMTPUser            string
+	SMTPPassword        string
+	SMTPSender          string
+
+	// Notification configuration
+	TelegramBotToken string
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -37,7 +49,16 @@ func LoadConfig() (*Config, error) {
 		PostgresDB:           getEnv("POSTGRES_DB", "nuntiare"),
 		SmartContractAddress: getEnv("SMART_CONTRACT_ADDRESS", ""),
 		BlockchainServiceURL: getEnv("BLOCKCHAIN_SERVICE_URL", "http://localhost:8545"),
-		APIPort:              getEnvAsInt("API_PORT", 6532),
+		NetworkID:            getEnvAsBigInt("NETWORK_ID", big.NewInt(1)), // Default to Mainnet ID
+		TelegramBotToken:     getEnv("TELEGRAM_BOT_TOKEN", ""),
+		SMTPHost:             getEnv("SMTP_HOST", "smtp.example.com"),
+		SMTPPort:             getEnvAsInt("SMTP_PORT", 587),
+		SMTPAlternativePort:  getEnvAsInt("SMTP_ALTERNATIVE_PORT", 465),
+		SMTPUser:             getEnv("SMTP_USER", ""),
+		SMTPPassword:         getEnv("SMTP_PASSWORD", ""),
+		SMTPSender:           getEnv("SMTP_SENDER", ""),
+
+		APIPort: getEnvAsInt("API_PORT", 6532),
 	}
 
 	return cfg, nil

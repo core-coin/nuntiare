@@ -70,6 +70,7 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.20.0 // indirect
+	github.com/go-telegram/bot v1.14.2
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12 // indirect

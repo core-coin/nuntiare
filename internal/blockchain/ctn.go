@@ -19,9 +19,6 @@ const (
 	batchTransfer = "e86e7c5f"
 	// transferFrom(address,address,uint256)
 	transferFrom = "31f2e679"
-
-	// Official Core Token contract address
-	CTNAddress = "ab7935cdef94ac9e6bcbcf779277aad7025993bc1964"
 )
 
 type Transfer struct {
@@ -30,9 +27,9 @@ type Transfer struct {
 	Amount float64
 }
 
-var signer = types.NewNucleusSigner(big.NewInt(common.Devin))
+func CheckForCTNTransfer(tx *types.Transaction, CTNAddress string) ([]*Transfer, error) {
+	signer := types.NewNucleusSigner(big.NewInt(int64(common.DefaultNetworkID)))
 
-func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 	receiver := tx.To().Hex()
 	sender, err := signer.Sender(tx)
 	if err != nil {
@@ -50,7 +47,7 @@ func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 			{
 				From:   sender.Hex(),
 				To:     input[28:72],
-				Amount: amount, // todo:error2215 check if it is correct
+				Amount: amount,
 			},
 		}, nil
 	case batchTransfer:
@@ -77,7 +74,7 @@ func CheckForCTNTransfer(tx *types.Transaction) ([]*Transfer, error) {
 			{
 				From:   input[28:72],
 				To:     input[92:136],
-				Amount: amount, // todo:error2215 check if it is correct
+				Amount: amount,
 			},
 		}, nil
 	}

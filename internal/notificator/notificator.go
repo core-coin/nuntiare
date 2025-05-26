@@ -1,41 +1,39 @@
 package notificator
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
 
 type Notificator struct {
 	logger *logger.Logger
+	db     models.Repository
+
+	TelegramNotificator *TelegramNotificator
+	EmailNotificator    *EmailNotificator
 }
 
-func NewNotificator(logger *logger.Logger) *Notificator {
-	return &Notificator{logger: logger}
+func NewNotificator(logger *logger.Logger, db models.Repository, telNotif *TelegramNotificator, emailNotif *EmailNotificator) *Notificator {
+	return &Notificator{logger: logger, db: db, TelegramNotificator: telNotif, EmailNotificator: emailNotif}
 }
 
-func (n *Notificator) SendNotification(url string, notification *models.Notification) {
-	data, err := json.Marshal(notification)
+func (n *Notificator) SendNotification(notification *models.Notification) {
+	notificationProvider, err := n.db.GetWalletsNotificationProvider(notification.Wallet)
 	if err != nil {
-		n.logger.Error("Failed to marshal notification data: ", err)
+		n.logger.Error("Failed to get notification provider: ", err)
 		return
 	}
-
-	// resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
-	// if err != nil {
-	// 	n.logger.Error("Failed to send notification: ", err)
-	// 	return
-	// }
-	// defer resp.Body.Close()
-
-	// if resp.StatusCode != http.StatusOK {
-	// 	n.logger.Error("Received non-OK response: ", resp.Status)
-	// }
-	fmt.Println("Notification sent: ", string(data))
+	if notificationProvider == nil {
+		n.logger.Error("Notification provider not found for wallet: ", notification.Wallet)
+		return
+	}
+	if notificationProvider.TelegramProvider.ChatID != "" {
+		go n.TelegramNotificator.SendNotification(notificationProvider.TelegramProvider.ChatID, notification.String())
+	}
+	if notificationProvider.EmailProvider.Email != "" {
+		go n.EmailNotificator.SendNotification(notificationProvider.EmailProvider.Email, notification.String())
+	}
 }
-
 
 /*
 
@@ -81,5 +79,5 @@ func (n *Notificator) SendNotification(deviceToken string, notification *models.
         n.logger.Error("Failed to send notification: ", res.Reason)
     }
 }
-	
+
 */

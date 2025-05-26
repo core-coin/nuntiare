@@ -7,13 +7,14 @@ import (
 	"github.com/core-coin/go-core/v2/core/types"
 
 	"github.com/core-coin/nuntiare/internal/blockchain"
+	"github.com/core-coin/nuntiare/internal/config"
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
 
 const (
 	// minimalBalance is the minimum balance for a wallet to be notified
-	minimalBalance = 10 // 200 CTN // todo:error2215: change after testing
+	minimalBalance = 200 // 200 CTN
 )
 
 // Nuntiare is the main struct for the Nuntiare application
@@ -21,6 +22,7 @@ const (
 // and serves all business logic
 type Nuntiare struct {
 	logger *logger.Logger
+	config *config.Config
 
 	repo        models.Repository
 	gocore      models.BlockchainService
@@ -33,12 +35,14 @@ func NewNuntiare(
 	gocore models.BlockchainService,
 	notificator models.NotificationService,
 	logger *logger.Logger,
+	config *config.Config,
 ) models.NuntiareI {
 	return &Nuntiare{
 		repo:        repo,
 		gocore:      gocore,
 		logger:      logger,
 		notificator: notificator,
+		config:      config,
 	}
 }
 
@@ -46,18 +50,18 @@ func NewNuntiare(
 func (n *Nuntiare) Start() {
 	// Start a goroutine to remove old subscription payments
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute) // todo:error2215: change after testing
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			// n.logger.Debug("Removing old subscription payments")
-			// err := n.repo.RemoveOldSubscriptionPayments(time.Now().Unix() - int64(5*time.Minute.Seconds())) // every payment is 200 CTN and it is subscription for 1 month // todo:error2215: change after testing
-			// if err != nil {
-			// 	n.logger.Error("Failed to remove old subscription payments", "error", err)
-			// }
-			// err = n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(15*time.Minute.Seconds())) // if user doesn't pay for subscription in 10 minutes, remove it // todo:error2215: change after testing
-			// if err != nil {
-			// 	n.logger.Error("Failed to remove unpaid subscriptions", "error", err)
-			// }
+			n.logger.Debug("Removing old subscription payments")
+			err := n.repo.RemoveOldSubscriptionPayments(time.Now().Unix() - int64(30*24*time.Hour.Seconds())) // every payment is 200 CTN and it is subscription for 1 month
+			if err != nil {
+				n.logger.Error("Failed to remove old subscription payments", "error", err)
+			}
+			err = n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(10*time.Minute.Seconds())) // if user doesn't pay for subscription in 10 minutes, remove it
+			if err != nil {
+				n.logger.Error("Failed to remove unpaid subscriptions", "error", err)
+			}
 		}
 	}()
 	// Start watching for new transactions
@@ -108,7 +112,7 @@ func (n *Nuntiare) WatchTransfers() {
 func (n *Nuntiare) checkBlock(block *types.Block) {
 	for _, tx := range block.Body().Transactions {
 		// check if is CTN transfer
-		transfers, err := blockchain.CheckForCTNTransfer(tx)
+		transfers, err := blockchain.CheckForCTNTransfer(tx, n.config.SmartContractAddress)
 		if err != nil {
 			n.logger.Error("Failed to check for CTN transfer ", "error ", err)
 		}
@@ -136,25 +140,25 @@ func (n *Nuntiare) processCTNTransfers(transfers []*blockchain.Transfer) {
 			n.logger.Info("Transaction to registered wallet detected ", "tx ", transfer)
 			wallet, err := n.repo.GetWallet(transfer.To)
 			if err != nil {
-				n.logger.Error("Failed to get wallet", "error", err, "currency", "CTN")
+				n.logger.Error("Failed to get wallet", "error", err, "currency ", "CTN")
 				continue
 			}
 			// todo:error2215 check if wallet has a subscription only if it's not whitelisted
 			// so we don't make unnecessary requests to the DB
 			subscribed, err := n.CheckWalletSubscription(wallet)
 			if err != nil {
-				n.logger.Error("Failed to check wallet subscription", "error", err, "currency", "CTN")
+				n.logger.Error("Failed to check wallet subscription", "error", err, "currency ", "CTN")
 				continue
 			}
 			if wallet.Whitelisted || subscribed {
-				n.logger.Debug("Wallet is whitelisted or subscribed", "wallet", wallet, "currency", "CTN")
+				n.logger.Debug("Wallet is whitelisted or subscribed ", "wallet", wallet, "currency ", "CTN")
 				notification := &models.Notification{
 					Wallet:   transfer.To,
 					Amount:   transfer.Amount,
 					Currency: "CTN",
 				}
 				n.logger.Info("Sending ", "notification ", notification, "currency ", "CTN")
-				go n.notificator.SendNotification(wallet.SubscriptionAddress, notification)
+				go n.notificator.SendNotification(notification)
 			}
 		}
 
@@ -209,7 +213,7 @@ func (n *Nuntiare) processXCBTransfer(tx *types.Transaction) {
 				Currency: "XCB",
 			}
 			n.logger.Info("Sending ", "notification ", notification)
-			go n.notificator.SendNotification(wallet.SubscriptionAddress, notification)
+			go n.notificator.SendNotification(notification)
 		}
 	}
 }

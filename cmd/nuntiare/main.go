@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 
 	"github.com/core-coin/go-core/v2/common"
@@ -30,10 +31,19 @@ func main() {
 			// Blockchain configuration
 			&cli.StringFlag{Name: "blockchain-service-url", Aliases: []string{"b"}, Usage: "Blockchain service URL"},
 			&cli.StringFlag{Name: "smart-contract-address", Aliases: []string{"s"}, Usage: "Smart contract address"},
+			&cli.Int64Flag{Name: "network-id", Aliases: []string{"n"}, Usage: "Network ID"},
 			// API configuration
 			&cli.IntFlag{Name: "api-port", Aliases: []string{"a"}, Usage: "API Server port"},
 			// Additional configuration
 			&cli.BoolFlag{Name: "development", Aliases: []string{"D"}, Usage: "Development mode"},
+			&cli.StringFlag{Name: "telegram-bot-token", Aliases: []string{"T"}, Usage: "Telegram bot token"},
+
+			&cli.StringFlag{Name: "email-smtp-server", Aliases: []string{"e"}, Usage: "SMTP server for email notifications"},
+			&cli.IntFlag{Name: "email-smtp-port", Aliases: []string{"E"}, Usage: "SMTP port for email notifications"},
+			&cli.StringFlag{Name: "email-smtp-alternative-port", Aliases: []string{"A"}, Usage: "SMTP alternative port for email notifications"},
+			&cli.StringFlag{Name: "email-smtp-user", Aliases: []string{"U"}, Usage: "SMTP user for email notifications"},
+			&cli.StringFlag{Name: "email-smtp-password", Aliases: []string{"W"}, Usage: "SMTP password for email notifications"},
+			&cli.StringFlag{Name: "email-smtp-sender", Aliases: []string{"S"}, Usage: "SMTP sender for email notifications"},
 		},
 		Action: func(c *cli.Context) error {
 			return run(c)
@@ -81,8 +91,34 @@ func run(c *cli.Context) error {
 	if c.IsSet("api-port") {
 		cfg.APIPort = c.Int("api-port")
 	}
+	if c.IsSet("telegram-bot-token") {
+		cfg.TelegramBotToken = c.String("telegram-bot-token")
+	}
+	if c.IsSet("network-id") {
+		cfg.NetworkID = big.NewInt(c.Int64("network-id"))
+	}
 
-	common.DefaultNetworkID = common.Devin
+	if c.IsSet("email-smtp-server") {
+		cfg.SMTPHost = c.String("email-smtp-server")
+	}
+	if c.IsSet("email-smtp-port") {
+		cfg.SMTPPort = c.Int("email-smtp-port")
+	}
+	if c.IsSet("email-smtp-alternative-port") {
+		cfg.SMTPAlternativePort = c.Int("email-smtp-alternative-port")
+	}
+	if c.IsSet("email-smtp-user") {
+		cfg.SMTPUser = c.String("email-smtp-user")
+	}
+	if c.IsSet("email-smtp-password") {
+		cfg.SMTPPassword = c.String("email-smtp-password")
+	}
+	if c.IsSet("email-smtp-sender") {
+		cfg.SMTPSender = c.String("email-smtp-sender")
+	}
+
+	common.DefaultNetworkID = common.NetworkID(cfg.NetworkID.Int64())
+
 	// Initialize logger
 	log, err := logger.NewLogger(cfg.Development)
 	if err != nil {
@@ -96,14 +132,16 @@ func run(c *cli.Context) error {
 	}
 
 	// Initialize blockchain service
-	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log)
+	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log, cfg)
 	blockchainService.Run()
 
-	// Initialize notificator
-	notificator := notificator.NewNotificator(log)
+	// Initialize notificators
+	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db)
+	emailNotificator := notificator.NewEmailNotificator(log, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPAlternativePort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPSender, db)
+	notificator := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
 	// Initialize API server
 	// Create Nuntiare instance
-	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log)
+	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log, cfg)
 
 	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.APIPort, log)
 

@@ -12,12 +12,13 @@ import (
 	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/go-core/v2/core/types"
 	"github.com/core-coin/go-core/v2/xcbclient"
+	"github.com/core-coin/nuntiare/internal/config"
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
 
 type Gocore struct {
-	logger *logger.Logger
-
+	logger       *logger.Logger
+	config       *config.Config
 	apiURL       string
 	client       *xcbclient.Client
 	subscription core.Subscription
@@ -26,8 +27,8 @@ type Gocore struct {
 }
 
 // NewGocore creates a new Gocore instance.
-func NewGocore(apiURL string, logger *logger.Logger) *Gocore {
-	return &Gocore{apiURL: apiURL, logger: logger}
+func NewGocore(apiURL string, logger *logger.Logger, config *config.Config) *Gocore {
+	return &Gocore{apiURL: apiURL, logger: logger, config: config}
 }
 
 func (g *Gocore) Run() error {
@@ -52,7 +53,7 @@ func (g *Gocore) ConnectToRPC() error {
 }
 
 func (g *Gocore) BuildBindings() error {
-	ctnAddress, err := common.HexToAddress(CTNAddress)
+	ctnAddress, err := common.HexToAddress(g.config.SmartContractAddress)
 	if err != nil {
 		g.logger.Fatalf("failed to parse Core Token contract address: %s", err)
 	}
