@@ -1,6 +1,6 @@
 services:
   nuntiare:
-    name: nuntiare
+    container_name: nuntiare
     build: .
     ports:
       - "6532:6532"
@@ -17,7 +17,7 @@ services:
       - postgres
 
   postgres:
-    name: postgres
+    container_name: postgres
     image: postgres:13
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
