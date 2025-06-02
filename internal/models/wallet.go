@@ -17,7 +17,7 @@ type Wallet struct {
 	// Paid is a flag indicating if the wallet has paid for the subscription.
 	Paid bool `json:"paid" gorm:"column:paid"`
 	// NotificationProvider is the associated notification provider for the wallet.
-	NotificationProvider NotificationProvider `json:"notification_provider" gorm:"foreignKey:Address;references:Address"`
+	NotificationProvider NotificationProvider `json:"notification_provider" gorm:"foreignKey:Address;references:Address;constraint:OnDelete:CASCADE"`
 }
 
 type SubscriptionPayment struct {
