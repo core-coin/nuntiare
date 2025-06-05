@@ -87,24 +87,29 @@ func (n *Nuntiare) IsRegistered(address string) (bool, error) {
 // WatchTransfers starts watching for new transfers inside blockchain
 // If tx receiver is a registered wallet, it sends a notification if wallet has subscribtion
 func (n *Nuntiare) WatchTransfers() {
-	channel, err := n.gocore.NewHeaderSubscription()
-	if err != nil {
-		n.logger.Fatal("Failed to subscribe to new head:", err)
-	}
-
-	for header := range channel {
-		n.logger.Debug("New block header received ", "number ", header.Number)
-
-		// Check if the block has transactions
-		if !header.EmptyBody() {
-			n.logger.Debug("Block has transactions")
-			block, err := n.gocore.GetBlockByNumber(header.Number.Uint64())
-			if err != nil {
-				n.logger.Error("Failed to get block by number", "number ", header.Number, "error", err)
-				continue
-			}
-			n.checkBlock(block)
+	for {
+		channel, err := n.gocore.NewHeaderSubscription()
+		if err != nil {
+			n.logger.Fatal("Failed to subscribe to new head:", err)
 		}
+
+		for header := range channel {
+			n.logger.Debug("New block header received ", "number ", header.Number)
+
+			// Check if the block has transactions
+			if !header.EmptyBody() {
+				n.logger.Debug("Block has transactions")
+				block, err := n.gocore.GetBlockByNumber(header.Number.Uint64())
+				if err != nil {
+					n.logger.Error("Failed to get block by number", "number ", header.Number, "error", err)
+					continue
+				}
+				n.checkBlock(block)
+			}
+		}
+		n.logger.Error("Channel closed, restarting subscription")
+		time.Sleep(5 * time.Second) // wait before restarting the subscription
+		n.logger.Debug("Restarting subscription to new head")
 	}
 
 }
