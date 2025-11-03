@@ -16,6 +16,6 @@ type Repository interface {
 
 	GetWalletsNotificationProvider(address string) (*NotificationProvider, error)
 
-	AddTelegramProviderChatID(address, chatID string) error
-	GetNotificationProviderByTelegramUsername(username string) (*NotificationProvider, error)
+	AddTelegramProviderChatID(username, chatID string) error
+	GetNotificationProvidersByTelegramUsername(username string) ([]*NotificationProvider, error)
 }

@@ -5,6 +5,9 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/nuntiare/internal/blockchain"
@@ -13,6 +16,7 @@ import (
 	"github.com/core-coin/nuntiare/internal/notificator"
 	"github.com/core-coin/nuntiare/internal/nuntiare"
 	"github.com/core-coin/nuntiare/internal/repository"
+	"github.com/core-coin/nuntiare/internal/wellknown"
 	"github.com/core-coin/nuntiare/pkg/logger"
 	"github.com/urfave/cli/v2"
 )
@@ -131,9 +135,39 @@ func run(c *cli.Context) error {
 		return fmt.Errorf("failed to connect to database: %v", err)
 	}
 
-	// Initialize blockchain service
+	// Initialize well-known service to fetch and update token list
+	wellKnownService := wellknown.NewWellKnownService(log, cfg)
+	log.Info("Starting well-known token service for periodic updates")
+	wellKnownService.StartPeriodicUpdate()
+
+	// Initialize blockchain service with retry logic
 	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log, cfg)
-	blockchainService.Run()
+	backoff := 1 * time.Second
+	maxBackoff := 30 * time.Second
+	maxRetries := 10
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = blockchainService.Run()
+		if err == nil {
+			log.Info("Successfully connected to blockchain service")
+			break
+		}
+
+		if attempt < maxRetries {
+			log.Error("Failed to initialize blockchain service, retrying...",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"retry_in", backoff,
+				"error", err)
+			time.Sleep(backoff)
+			backoff = backoff * 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		} else {
+			return fmt.Errorf("failed to initialize blockchain service after %d attempts: %v", maxRetries, err)
+		}
+	}
 
 	// Initialize notificators
 	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db)
@@ -141,13 +175,31 @@ func run(c *cli.Context) error {
 	notificator := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
 	// Initialize API server
 	// Create Nuntiare instance
-	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log, cfg)
+	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, wellKnownService, log, cfg)
 
 	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.APIPort, log)
 
-	go apiServer.Start()
-	// Start the application
-	nuntiareApp.Start()
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
+	go apiServer.Start()
+
+	// Start the application in a goroutine
+	go nuntiareApp.Start()
+
+	// Wait for shutdown signal
+	sig := <-sigChan
+	log.Info("Received shutdown signal", "signal", sig.String())
+
+	// Graceful shutdown
+	log.Info("Shutting down gracefully...")
+
+	// Close blockchain service connection
+	if err := blockchainService.Close(); err != nil {
+		log.Error("Error closing blockchain service", "error", err)
+	}
+
+	log.Info("Shutdown complete")
 	return nil
 }

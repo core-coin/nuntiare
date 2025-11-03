@@ -1,10 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"math/big"
 	"os"
 	"strconv"
 
+	"github.com/core-coin/go-core/v2/common"
 	"github.com/joho/godotenv"
 )
 
@@ -33,6 +35,10 @@ type Config struct {
 
 	// Notification configuration
 	TelegramBotToken string
+
+	// Well-known configuration
+	WellKnownURL string
+	Network      string
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -59,9 +65,51 @@ func LoadConfig() (*Config, error) {
 		SMTPSender:           getEnv("SMTP_SENDER", ""),
 
 		APIPort: getEnvAsInt("API_PORT", 6532),
+
+		WellKnownURL: getEnv("WELL_KNOWN_URL", "https://well-known.core.org"),
+		Network:      getEnv("NETWORK", "mainnet"),
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// Validate checks that all required configuration fields are properly set
+func (c *Config) Validate() error {
+	if c.SmartContractAddress == "" {
+		return fmt.Errorf("SMART_CONTRACT_ADDRESS is required")
+	}
+
+	// Validate smart contract address format
+	if _, err := common.HexToAddress(c.SmartContractAddress); err != nil {
+		return fmt.Errorf("invalid SMART_CONTRACT_ADDRESS format: %w", err)
+	}
+
+	if c.BlockchainServiceURL == "" {
+		return fmt.Errorf("BLOCKCHAIN_SERVICE_URL is required")
+	}
+
+	if c.WellKnownURL == "" {
+		return fmt.Errorf("WELL_KNOWN_URL is required")
+	}
+
+	if c.Network == "" {
+		return fmt.Errorf("NETWORK is required (e.g., mainnet, devin)")
+	}
+
+	if c.PostgresDB == "" {
+		return fmt.Errorf("POSTGRES_DB is required")
+	}
+
+	if c.PostgresHost == "" {
+		return fmt.Errorf("POSTGRES_HOST is required")
+	}
+
+	return nil
 }
 
 // Helper functions to read environment variables

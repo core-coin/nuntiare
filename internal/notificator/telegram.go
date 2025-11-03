@@ -2,8 +2,8 @@ package notificator
 
 import (
 	"context"
-
 	"fmt"
+	"strings"
 
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
@@ -23,21 +23,35 @@ func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repos
 		logger: logger,
 		db:     db,
 	}
+
+	// If no token provided, return provider with nil bot (disabled)
+	if token == "" {
+		logger.Warn("Telegram bot token not provided, Telegram notifications will be disabled")
+		return provider
+	}
+
 	opts := []bot.Option{
 		bot.WithDefaultHandler(provider.handler),
 	}
 
 	b, err := bot.New(token, opts...)
 	if err != nil {
-		panic(err)
+		logger.Error("Failed to initialize Telegram bot, Telegram notifications will be disabled", "error", err)
+		return provider
 	}
 	go b.Start(context.Background())
 	provider.bot = b
 
+	logger.Info("Telegram bot initialized successfully")
 	return provider
 }
 
 func (t *TelegramNotificator) SendNotification(chatId, message string) {
+	if t.bot == nil {
+		t.logger.Warn("Telegram bot unavailable, skipping notification")
+		return
+	}
+
 	params := &bot.SendMessageParams{
 		ChatID: chatId,
 		Text:   message,
@@ -49,6 +63,10 @@ func (t *TelegramNotificator) SendNotification(chatId, message string) {
 }
 
 func (t *TelegramNotificator) handler(ctx context.Context, b *bot.Bot, update *tgModels.Update) {
+	if update.Message == nil {
+		t.logger.Debug("Telegram update without message payload received")
+		return
+	}
 	t.logger.Debug("Telegram update: ", update.Message.From.Username, " ", update.Message.Text)
 	user := update.Message.From
 	if user == nil {
@@ -56,21 +74,30 @@ func (t *TelegramNotificator) handler(ctx context.Context, b *bot.Bot, update *t
 		return
 	}
 	if update.Message.Text == "/start" {
-		provider, err := t.db.GetNotificationProviderByTelegramUsername(user.Username)
+		providers, err := t.db.GetNotificationProvidersByTelegramUsername(user.Username)
 		if err != nil {
 			t.logger.Error("Failed to get notification provider by telegram username: ", err, " username: ", user.Username)
 			return
 		}
-		if provider == nil {
-			t.logger.Error("Notification provider is nil")
+		if len(providers) == 0 {
+			t.logger.Error("Notification providers not found for username: ", user.Username)
 			return
 		}
-		t.logger.Info("Telegram provider found: ", provider)
-		if err := t.db.AddTelegramProviderChatID(provider.Address, fmt.Sprint(update.Message.Chat.ID)); err != nil {
+		t.logger.Info("Telegram providers found: ", len(providers))
+		chatID := fmt.Sprint(update.Message.Chat.ID)
+		if err := t.db.AddTelegramProviderChatID(user.Username, chatID); err != nil {
 			t.logger.Error("Failed to add telegram provider chat ID: ", err)
 			return
 		}
 		t.logger.Info("Telegram provider chat ID added successfully")
-		t.SendNotification(fmt.Sprint(update.Message.Chat.ID), "You have successfully subscribed to notifications. Address: "+provider.Address)
+		addresses := make([]string, 0, len(providers))
+		for _, provider := range providers {
+			addresses = append(addresses, provider.Address)
+		}
+		message := "You have successfully subscribed to notifications."
+		if len(addresses) > 0 {
+			message = fmt.Sprintf("%s Addresses: %s", message, strings.Join(addresses, ", "))
+		}
+		t.SendNotification(chatID, message)
 	}
 }
