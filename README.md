@@ -64,9 +64,8 @@ This setup starts a `postgres` container and the `nuntiare` service exposed on `
 | `POSTGRES_HOST` / `POSTGRES_PORT` | PostgreSQL host and port. | `localhost` / `5432` |
 | `BLOCKCHAIN_SERVICE_URL` | Core RPC endpoint (`xcbclient.Dial` compatible). | `http://localhost:8545` |
 | `SMART_CONTRACT_ADDRESS` | Core Token (CTN) contract address used for subscription payments. **This is the only token used for subscription payments.** | _none_ |
-| `NETWORK_ID` | Chain ID forwarded to go-core. | `1` |
-| `NETWORK` | Network name for .well-known token registry (e.g., `mainnet`, `devin`). | `mainnet` |
-| `WELL_KNOWN_URL` | Base URL for the .well-known token registry service. | `https://well-known.core.org` |
+| `NETWORK_ID` | Chain ID forwarded to go-core. Also determines network name for .well-known registry: `1` = xcb (mainnet), `3` = xab (devin). | `1` |
+| `WELL_KNOWN_URL` | Base URL for the .well-known token registry service. | `https://coreblockchain.net` |
 | `API_PORT` | HTTP API port. | `6532` |
 | `DEVELOPMENT` | Enables more verbose logging when `true`. | `false` |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather). Needed for Telegram notifications. | _none_ |
@@ -79,26 +78,83 @@ All options are also exposed as CLI flags. Run `go run ./cmd/nuntiare --help` to
 ## HTTP API
 Base URL: `http://<host>:<API_PORT>/api/v1`
 
-| Endpoint | Method | Purpose | Required Query Params |
+| Endpoint | Method | Purpose | Request Body/Params |
 | --- | --- | --- | --- |
-| `/subscription` | GET | Register a wallet, subscription address, and notification preferences. | `originator`, `subscriber` (address that is watched for subscription payment), `destination` (address that is watched for transfers), `network` |
-| `/is_subscribed` | GET | Check if a wallet currently has an active subscription. | `address` |
+| `/subscription` | POST | Register a wallet, subscription address, and notification preferences. | JSON body (see below) |
+| `/is_subscribed` | GET | Check if a wallet currently has an active subscription. | Query param: `address` |
 
-Optional query parameters for `/subscription`:
-- `telegram`: Telegram username (without `@`). If provided, the user must start the bot and run `/start` so the service can capture the chat ID.
-- `email`: Email address to receive notifications.
+### POST `/subscription` - Register Wallet
 
-Example registration request:
-```bash
-curl "http://localhost:6532/api/v1/subscription?originator=Acme&subscriber=0xSubscriptionWallet&destination=0xReceivingWallet&network=xcb&telegram=alice_core&email=alice@example.com"
+**Request Body (JSON):**
+```json
+{
+  "origin": "string (required)",
+  "subscriber": "string (required)",
+  "destination": "string (required)",
+  "network": "string (required)",
+  "telegram": "string (optional)",
+  "email": "string (optional)"
+}
 ```
 
-Subscription status lookup:
-```bash
-curl "http://localhost:6532/api/v1/is_subscribed?address=0xReceivingWallet"
+**Fields:**
+- `origin`: Originator/source identifier (e.g., "payto", "Acme")
+- `subscriber`: Subscription payment address (where user sends CTN for subscription)
+- `destination`: Wallet address to watch for incoming transfers
+- `network`: Network identifier (e.g., "xcb" for mainnet, "xab" for devin)
+- `telegram`: (Optional) Telegram username without `@`. User must run `/start` with the bot to activate.
+- `email`: (Optional) Email address for notifications
+
+**Response (Success - 201 Created):**
+```json
+{
+  "success": true,
+  "message": "Wallet registered successfully",
+  "address": "0xReceivingWallet",
+  "subscription_address": "0xSubscriptionWallet"
+}
 ```
 
-Responses use standard HTTP status codes. A successful `is_subscribed` call returns JSON boolean (`true` or `false`).
+**Response (Error - 400/500):**
+```json
+{
+  "success": false,
+  "error": "Error message"
+}
+```
+
+**Example registration request:**
+```bash
+curl -X POST http://localhost:6532/api/v1/subscription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin": "payto",
+    "subscriber": "cb1234567890abcdef1234567890abcdef12345678",
+    "destination": "cb9876543210fedcba9876543210fedcba98765432",
+    "network": "xcb",
+    "telegram": "alice_core",
+    "email": "alice@example.com"
+  }'
+```
+
+### GET `/is_subscribed` - Check Subscription Status
+
+**Query Parameters:**
+- `address`: Wallet address to check
+
+**Response (200 OK):**
+```json
+true
+```
+or
+```json
+false
+```
+
+**Example:**
+```bash
+curl "http://localhost:6532/api/v1/is_subscribed?address=cb9876543210fedcba9876543210fedcba98765432"
+```
 
 ## How Notifications Work
 - The service keeps long-lived subscriptions to new block headers from the configured Core RPC endpoint.

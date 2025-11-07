@@ -1,6 +1,10 @@
 package models
 
-import "fmt"
+import (
+	"fmt"
+	"math/big"
+	"strings"
+)
 
 type NotificationService interface {
 	SendNotification(notification *Notification)
@@ -17,7 +21,15 @@ type Notification struct {
 
 func (n *Notification) String() string {
 	if n.TokenType == "CBC721" {
-		return fmt.Sprintf("Received %v NFT (ID: %v) on address %v", n.Currency, n.TokenID, n.Wallet)
+		// Convert hex token ID to decimal for better readability
+		tokenID := n.TokenID
+		tokenIDStr := strings.TrimPrefix(tokenID, "0x")
+		if tokenIDBig, ok := new(big.Int).SetString(tokenIDStr, 16); ok {
+			tokenID = tokenIDBig.String() // Decimal representation
+		}
+		return fmt.Sprintf("Received %v NFT (ID: %v) on address %v", n.Currency, tokenID, n.Wallet)
 	}
-	return fmt.Sprintf("Received %v %v on address %v", n.Amount, n.Currency, n.Wallet)
+	// Format amount to avoid scientific notation and strip trailing zeros
+	amountStr := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.18f", n.Amount), "0"), ".")
+	return fmt.Sprintf("Received %v %v on address %v", amountStr, n.Currency, n.Wallet)
 }

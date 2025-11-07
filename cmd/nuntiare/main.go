@@ -7,9 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/nuntiare/internal/blockchain"
 	"github.com/core-coin/nuntiare/internal/config"
 	"github.com/core-coin/nuntiare/internal/http_api"
@@ -121,8 +119,6 @@ func run(c *cli.Context) error {
 		cfg.SMTPSender = c.String("email-smtp-sender")
 	}
 
-	common.DefaultNetworkID = common.NetworkID(cfg.NetworkID.Int64())
-
 	// Initialize logger
 	log, err := logger.NewLogger(cfg.Development)
 	if err != nil {
@@ -140,42 +136,27 @@ func run(c *cli.Context) error {
 	log.Info("Starting well-known token service for periodic updates")
 	wellKnownService.StartPeriodicUpdate()
 
-	// Initialize blockchain service with retry logic
+	// Initialize blockchain service (connection will be established in background)
 	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log, cfg)
-	backoff := 1 * time.Second
-	maxBackoff := 30 * time.Second
-	maxRetries := 10
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err = blockchainService.Run()
-		if err == nil {
-			log.Info("Successfully connected to blockchain service")
-			break
-		}
+	// Initialize notificators
+	webhookMode := cfg.TelegramWebhookURL != ""
+	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db, webhookMode)
 
-		if attempt < maxRetries {
-			log.Error("Failed to initialize blockchain service, retrying...",
-				"attempt", attempt,
-				"max_retries", maxRetries,
-				"retry_in", backoff,
-				"error", err)
-			time.Sleep(backoff)
-			backoff = backoff * 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+	// Set webhook if URL is configured
+	if webhookMode && telegramNotificator != nil {
+		if err := telegramNotificator.SetWebhook(cfg.TelegramWebhookURL); err != nil {
+			log.Error("Failed to set Telegram webhook", "error", err)
 		} else {
-			return fmt.Errorf("failed to initialize blockchain service after %d attempts: %v", maxRetries, err)
+			log.Info("Telegram webhook configured successfully", "url", cfg.TelegramWebhookURL)
 		}
 	}
 
-	// Initialize notificators
-	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db)
 	emailNotificator := notificator.NewEmailNotificator(log, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPAlternativePort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPSender, db)
-	notificator := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
+	notificatorService := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
 	// Initialize API server
 	// Create Nuntiare instance
-	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, wellKnownService, log, cfg)
+	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificatorService, wellKnownService, log, cfg)
 
 	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.APIPort, log)
 

@@ -61,7 +61,7 @@ func NewWellKnownService(
 		logger:     logger,
 		config:     config,
 		baseURL:    config.WellKnownURL,
-		network:    config.Network,
+		network:    config.GetNetworkName(), // Derive from NETWORK_ID
 		tokenCache: make([]*models.Token, 0),
 		client: &http.Client{
 			Timeout: 30 * time.Second,

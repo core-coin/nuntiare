@@ -12,16 +12,17 @@ import (
 )
 
 type TelegramNotificator struct {
-	logger *logger.Logger
-	bot    *bot.Bot
-
-	db models.Repository
+	logger      *logger.Logger
+	bot         *bot.Bot
+	db          models.Repository
+	webhookMode bool
 }
 
-func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repository) *TelegramNotificator {
+func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repository, webhookMode bool) *TelegramNotificator {
 	provider := &TelegramNotificator{
-		logger: logger,
-		db:     db,
+		logger:      logger,
+		db:          db,
+		webhookMode: webhookMode,
 	}
 
 	// If no token provided, return provider with nil bot (disabled)
@@ -39,10 +40,16 @@ func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repos
 		logger.Error("Failed to initialize Telegram bot, Telegram notifications will be disabled", "error", err)
 		return provider
 	}
-	go b.Start(context.Background())
-	provider.bot = b
 
-	logger.Info("Telegram bot initialized successfully")
+	// Only start polling if not in webhook mode
+	if !webhookMode {
+		go b.Start(context.Background())
+		logger.Info("Telegram bot initialized successfully (polling mode)")
+	} else {
+		logger.Info("Telegram bot initialized successfully (webhook mode)")
+	}
+
+	provider.bot = b
 	return provider
 }
 
@@ -100,4 +107,33 @@ func (t *TelegramNotificator) handler(ctx context.Context, b *bot.Bot, update *t
 		}
 		t.SendNotification(chatID, message)
 	}
+}
+
+// SetWebhook configures the Telegram webhook URL
+func (t *TelegramNotificator) SetWebhook(webhookURL string) error {
+	if t.bot == nil {
+		return fmt.Errorf("telegram bot not initialized")
+	}
+
+	ctx := context.Background()
+	_, err := t.bot.SetWebhook(ctx, &bot.SetWebhookParams{
+		URL: webhookURL,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set webhook: %w", err)
+	}
+
+	t.logger.Info("Telegram webhook configured successfully", "url", webhookURL)
+	return nil
+}
+
+// ProcessUpdate processes a webhook update
+func (t *TelegramNotificator) ProcessUpdate(update *tgModels.Update) error {
+	if t.bot == nil {
+		return fmt.Errorf("telegram bot not initialized")
+	}
+
+	// Process the update using the existing handler
+	t.handler(context.Background(), t.bot, update)
+	return nil
 }

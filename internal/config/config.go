@@ -34,11 +34,24 @@ type Config struct {
 	SMTPSender          string
 
 	// Notification configuration
-	TelegramBotToken string
+	TelegramBotToken   string
+	TelegramWebhookURL string
 
 	// Well-known configuration
 	WellKnownURL string
-	Network      string
+}
+
+// GetNetworkName returns the network name for well-known API based on NetworkID
+// NetworkID 1 = xcb (mainnet), NetworkID 3 = xab (devin testnet)
+func (c *Config) GetNetworkName() string {
+	if c.NetworkID.Cmp(big.NewInt(1)) == 0 {
+		return "xcb" // Mainnet
+	}
+	if c.NetworkID.Cmp(big.NewInt(3)) == 0 {
+		return "xab" // Devin testnet
+	}
+	// Default to xab (testnet) for unknown networks
+	return "xab"
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -57,6 +70,7 @@ func LoadConfig() (*Config, error) {
 		BlockchainServiceURL: getEnv("BLOCKCHAIN_SERVICE_URL", "http://localhost:8545"),
 		NetworkID:            getEnvAsBigInt("NETWORK_ID", big.NewInt(1)), // Default to Mainnet ID
 		TelegramBotToken:     getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookURL:   getEnv("TELEGRAM_WEBHOOK_URL", ""),
 		SMTPHost:             getEnv("SMTP_HOST", "smtp.example.com"),
 		SMTPPort:             getEnvAsInt("SMTP_PORT", 587),
 		SMTPAlternativePort:  getEnvAsInt("SMTP_ALTERNATIVE_PORT", 465),
@@ -66,9 +80,11 @@ func LoadConfig() (*Config, error) {
 
 		APIPort: getEnvAsInt("API_PORT", 6532),
 
-		WellKnownURL: getEnv("WELL_KNOWN_URL", "https://well-known.core.org"),
-		Network:      getEnv("NETWORK", "mainnet"),
+		WellKnownURL: getEnv("WELL_KNOWN_URL", "https://coreblockchain.net"),
 	}
+
+	// Set default network ID before validation (required for address validation)
+	common.DefaultNetworkID = common.NetworkID(cfg.NetworkID.Int64())
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
@@ -95,10 +111,6 @@ func (c *Config) Validate() error {
 
 	if c.WellKnownURL == "" {
 		return fmt.Errorf("WELL_KNOWN_URL is required")
-	}
-
-	if c.Network == "" {
-		return fmt.Errorf("NETWORK is required (e.g., mainnet, devin)")
 	}
 
 	if c.PostgresDB == "" {

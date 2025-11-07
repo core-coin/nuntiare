@@ -110,3 +110,12 @@ func (g *Gocore) GetAddressCTNBalance(wallet string) (*big.Int, error) {
 	balance := results[0].(*big.Int)
 	return balance, nil
 }
+
+func (g *Gocore) GetTransactionReceipt(txHash string) (*types.Receipt, error) {
+	hash := common.HexToHash(txHash)
+	receipt, err := g.client.TransactionReceipt(context.Background(), hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction receipt: %s", err)
+	}
+	return receipt, nil
+}

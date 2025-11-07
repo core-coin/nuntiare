@@ -3,6 +3,7 @@ package blockchain
 import (
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/go-core/v2/core/types"
@@ -49,6 +50,10 @@ const (
 
 // CBC721ABI is the ABI for CBC721 (ERC721) tokens
 const CBC721ABI = `[{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"Transfer","type":"event"}]`
+
+// CBC721 Transfer event signature: keccak256("Transfer(address,address,uint256)")
+// Core blockchain uses: 0xc17a9d92b89f27cb79cc390f23a1a5d302fefab8c7911075ede952ac2b5607a1
+const cbc721TransferEventSignature = "c17a9d92b89f27cb79cc390f23a1a5d302fefab8c7911075ede952ac2b5607a1"
 
 const (
 	// transfer(address,uint256)
@@ -165,14 +170,16 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 }
 
 // CheckForCBC721Transfer checks if a transaction is a CBC721 (NFT) transfer
-// CBC721 transfers use events, but we can also detect them from input data
-// The function signature for transferFrom is similar to CBC20 but amount is tokenId
+// This function is kept for backward compatibility and for detecting transfers from input data
+// For proper event-based detection, use CheckForCBC721TransferFromReceipt instead
 func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol string) ([]*Transfer, error) {
 	receiver := tx.To().Hex()
-	input := common.Bytes2Hex(tx.Data())
 	if receiver != tokenAddress {
 		return nil, nil
 	}
+
+	// Parse input data for transferFrom calls
+	input := common.Bytes2Hex(tx.Data())
 
 	// Validate minimum input length for method selector
 	if len(input) < methodSelectorLength {
@@ -205,4 +212,78 @@ func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol str
 	}
 
 	return nil, nil
+}
+
+// CheckForCBC721TransferFromReceipt parses transaction receipt logs for CBC721 Transfer events
+// This is the proper way to detect NFT transfers as they emit Transfer events
+func CheckForCBC721TransferFromReceipt(receipt *types.Receipt, tokenAddress, tokenSymbol string) ([]*Transfer, error) {
+	if receipt == nil {
+		return nil, nil
+	}
+
+	transfers := []*Transfer{}
+
+	// Parse logs for Transfer events
+	for _, log := range receipt.Logs {
+		// Check if log is from the token contract
+		// Compare by matching the raw address bytes (last N chars of token address)
+		logAddr := strings.TrimPrefix(strings.ToLower(log.Address.Hex()), "0x")
+		tokenAddr := strings.ToLower(tokenAddress)
+
+		// Compare raw address: if token address is longer, compare with its suffix
+		tokenAddrToCompare := tokenAddr
+		if len(tokenAddr) > len(logAddr) {
+			tokenAddrToCompare = tokenAddr[len(tokenAddr)-len(logAddr):]
+		}
+
+		if logAddr != tokenAddrToCompare {
+			continue
+		}
+
+		// CBC721 Transfer events have 4 topics:
+		// topics[0]: event signature
+		// topics[1]: from address (indexed)
+		// topics[2]: to address (indexed)
+		// topics[3]: tokenId (indexed)
+		if len(log.Topics) != 4 {
+			continue
+		}
+
+		// Check if this is a Transfer event
+		eventSig := log.Topics[0].Hex()
+		expectedSig := "0x" + cbc721TransferEventSignature
+		if eventSig != expectedSig {
+			continue
+		}
+
+		// Extract from, to, and tokenId from topics
+		// Topics are 32 bytes (64 hex chars), Core addresses are 22 bytes (44 hex chars)
+		// Addresses are right-aligned in topics, so extract last 44 hex chars
+		fromAddrFull := log.Topics[1].Hex() // 0x + 64 hex chars
+		toAddrFull := log.Topics[2].Hex()
+		tokenIDHex := log.Topics[3].Hex()
+
+		// Extract last 44 hex chars for Core addresses
+		// Remove 0x prefix first: fromAddrFull has "0x" + 64 chars = 66 total
+		fromAddrRaw := strings.TrimPrefix(fromAddrFull, "0x")
+		toAddrRaw := strings.TrimPrefix(toAddrFull, "0x")
+
+		fromAddr := strings.ToLower(fromAddrRaw[len(fromAddrRaw)-44:])
+		toAddr := strings.ToLower(toAddrRaw[len(toAddrRaw)-44:])
+
+		// Remove 0x prefix from tokenID
+		tokenIDHex = strings.TrimPrefix(tokenIDHex, "0x")
+
+		transfers = append(transfers, &Transfer{
+			From:         fromAddr,
+			To:           toAddr,
+			Amount:       1, // NFTs are always 1 unit
+			TokenAddress: tokenAddress,
+			TokenSymbol:  tokenSymbol,
+			TokenType:    "CBC721",
+			TokenID:      tokenIDHex,
+		})
+	}
+
+	return transfers, nil
 }

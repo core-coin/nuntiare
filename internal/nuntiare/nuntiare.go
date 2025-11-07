@@ -1,9 +1,12 @@
 package nuntiare
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/core-coin/go-core/v2/core/types"
@@ -15,8 +18,10 @@ import (
 )
 
 const (
-	// minimalBalance is the minimum balance for a wallet to be notified
-	minimalBalance = 200 // 200 CTN
+	// subscriptionMonthCost is the cost in CTN for one month of subscription
+	subscriptionMonthCost = 200.0 // CTN
+	// subscriptionMonthDuration is the duration of one month in seconds
+	subscriptionMonthDuration = 30 * 24 * 60 * 60 // 30 days in seconds
 )
 
 // TokenCache interface for getting cached tokens
@@ -28,13 +33,24 @@ type TokenCache interface {
 // It contains all the necessary components to run the application
 // and serves all business logic
 type Nuntiare struct {
-	logger *logger.Logger
-	config *config.Config
+	logger     *logger.Logger
+	config     *config.Config
+	instanceID string // Unique identifier for this instance (for HA distributed locking)
 
 	repo        models.Repository
 	gocore      models.BlockchainService
 	notificator models.NotificationService
 	tokenCache  TokenCache
+}
+
+// generateInstanceID creates a unique identifier for this instance
+func generateInstanceID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to timestamp-based ID if random generation fails
+		return fmt.Sprintf("instance-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(bytes)
 }
 
 // NewNuntiare creates a new Nuntiare instance
@@ -46,6 +62,9 @@ func NewNuntiare(
 	logger *logger.Logger,
 	config *config.Config,
 ) models.NuntiareI {
+	instanceID := generateInstanceID()
+	logger.Info("Initializing Nuntiare instance", "instance_id", instanceID)
+
 	return &Nuntiare{
 		repo:        repo,
 		gocore:      gocore,
@@ -53,6 +72,7 @@ func NewNuntiare(
 		notificator: notificator,
 		tokenCache:  tokenCache,
 		config:      config,
+		instanceID:  instanceID,
 	}
 }
 
@@ -111,24 +131,34 @@ func weiToXCB(wei *big.Int) float64 {
 
 // Start starts the Nuntiare application
 func (n *Nuntiare) Start() {
-	// Start a goroutine to remove old subscription payments
+	// Start a goroutine to clean up unpaid subscriptions
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			n.logger.Debug("Removing old subscription payments")
-			err := n.repo.RemoveOldSubscriptionPayments(time.Now().Unix() - int64(30*24*time.Hour.Seconds())) // every payment is 200 CTN and it is subscription for 1 month
-			if err != nil {
-				n.logger.Error("Failed to remove old subscription payments", "error", err)
-			}
-			err = n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(10*time.Minute.Seconds())) // if user doesn't pay for subscription in 10 minutes, remove it
+			n.logger.Debug("Cleaning up unpaid subscriptions")
+			// Remove wallets that were created but never paid within 10 minutes
+			err := n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(10*time.Minute.Seconds()))
 			if err != nil {
 				n.logger.Error("Failed to remove unpaid subscriptions", "error", err)
 			}
 		}
 	}()
-	// Start watching for new transactions
-	n.WatchTransfers()
+
+	// HA: Start a goroutine to cleanup expired locks (every 1 minute)
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			n.logger.Debug("Cleaning up expired locks")
+			if err := n.repo.CleanupExpiredLocks(); err != nil {
+				n.logger.Error("Failed to cleanup expired locks", "error", err)
+			}
+		}
+	}()
+
+	// Start watching for new transactions (handles connection retries internally)
+	go n.WatchTransfers()
 }
 
 // RegisterNewWallet adds a new wallet to the repository
@@ -147,12 +177,36 @@ func (n *Nuntiare) IsRegistered(address string) (bool, error) {
 	return n.repo.CheckWalletExists(address)
 }
 
+// initializeBlockchain initializes the blockchain service connection
+func (n *Nuntiare) initializeBlockchain() error {
+	return n.gocore.Run()
+}
+
 // WatchTransfers starts watching for new transfers inside blockchain
 // If tx receiver is a registered wallet, it sends a notification if wallet has subscribtion
 func (n *Nuntiare) WatchTransfers() {
 	backoff := 1 * time.Second
 	maxBackoff := 60 * time.Second
+	connectionBackoff := 5 * time.Second
 
+	// First, ensure blockchain connection is established
+	n.logger.Info("Initializing blockchain connection for transfer monitoring...")
+
+	for {
+		// Try to connect to blockchain
+		if err := n.initializeBlockchain(); err != nil {
+			n.logger.Warn("Failed to initialize blockchain connection, will retry",
+				"error", err,
+				"retry_in", connectionBackoff)
+			time.Sleep(connectionBackoff)
+			continue
+		}
+
+		n.logger.Info("Successfully connected to blockchain service")
+		break
+	}
+
+	// Now start watching for transfers
 	for {
 		channel, err := n.gocore.NewHeaderSubscription()
 		if err != nil {
@@ -161,6 +215,10 @@ func (n *Nuntiare) WatchTransfers() {
 			backoff = backoff * 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
+			}
+			// Try to reinitialize blockchain connection
+			if err := n.initializeBlockchain(); err != nil {
+				n.logger.Debug("Failed to reinitialize blockchain", "error", err)
 			}
 			continue
 		}
@@ -190,13 +248,38 @@ func (n *Nuntiare) WatchTransfers() {
 }
 
 func (n *Nuntiare) checkBlock(block *types.Block) {
+	// HA: Try to acquire distributed lock for this block processing
+	// Lock name includes block number to allow different instances to process different blocks
+	// TTL is 30 seconds - if processing takes longer, another instance can take over
+	lockName := fmt.Sprintf("block_processor_%d", block.NumberU64())
+	acquired, err := n.repo.TryAcquireLock(lockName, n.instanceID, 30)
+	if err != nil {
+		n.logger.Error("Failed to acquire lock for block processing", "block", block.NumberU64(), "error", err)
+		return
+	}
+	if !acquired {
+		// Another instance is processing this block, skip it
+		n.logger.Debug("Block already being processed by another instance", "block", block.NumberU64())
+		return
+	}
+
+	// Release lock when done
+	defer func() {
+		if err := n.repo.ReleaseLock(lockName, n.instanceID); err != nil {
+			n.logger.Error("Failed to release lock", "block", block.NumberU64(), "error", err)
+		}
+	}()
+
+	n.logger.Debug("Processing block", "block", block.NumberU64(), "instance", n.instanceID)
+
 	// Get all watched tokens from in-memory cache
 	tokens := n.tokenCache.GetAllTokens()
 
 	// Build address->token map for O(1) lookup instead of O(n) iteration
+	// Normalize all addresses to lowercase for consistent lookups
 	tokensByAddress := make(map[string]*models.Token, len(tokens))
 	for _, token := range tokens {
-		tokensByAddress[token.Address] = token
+		tokensByAddress[strings.ToLower(token.Address)] = token
 	}
 
 	for _, tx := range block.Body().Transactions {
@@ -206,10 +289,18 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 		}
 
 		receiver := tx.To().Hex()
+		// Normalize receiver address for lookups (remove 0x prefix and lowercase)
+		receiverNormalized := receiver
+		if len(receiverNormalized) > 2 && receiverNormalized[:2] == "0x" {
+			receiverNormalized = receiverNormalized[2:]
+		}
+		receiverNormalized = strings.ToLower(receiverNormalized)
+
+		n.logger.Debug("Processing transaction", "tx", tx.Hash().String(), "to", receiverNormalized)
 		var allTransfers []*blockchain.Transfer
 
 		// Check for CTN transfers (for subscription payments)
-		if receiver == n.config.SmartContractAddress {
+		if receiverNormalized == n.config.SmartContractAddress {
 			ctnTransfers, err := blockchain.CheckForCTNTransfer(tx, n.config.SmartContractAddress)
 			if err != nil {
 				n.logger.Error("Failed to check for CTN transfer", "error", err)
@@ -220,14 +311,24 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 		}
 
 		// O(1) lookup for token by address instead of O(n) iteration
-		if token, exists := tokensByAddress[receiver]; exists {
+		if token, exists := tokensByAddress[receiverNormalized]; exists {
+			n.logger.Debug("Token found in cache", "token", token.Symbol, "type", token.Type, "address", token.Address)
 			var transfers []*blockchain.Transfer
 			var err error
 
 			if token.Type == "CBC20" {
 				transfers, err = blockchain.CheckForCBC20Transfer(tx, token.Address, token.Symbol, token.Decimals)
 			} else if token.Type == "CBC721" {
-				transfers, err = blockchain.CheckForCBC721Transfer(tx, token.Address, token.Symbol)
+				n.logger.Debug("Fetching receipt for CBC721 transfer", "tx", tx.Hash().String())
+				// CBC721 transfers emit events, so we need to fetch the receipt
+				receipt, receiptErr := n.gocore.GetTransactionReceipt(tx.Hash().Hex())
+				if receiptErr != nil {
+					n.logger.Error("Failed to get transaction receipt", "tx", tx.Hash().String(), "error", receiptErr)
+				} else {
+					n.logger.Debug("Receipt fetched, parsing events", "tx", tx.Hash().String(), "logs", len(receipt.Logs))
+					transfers, err = blockchain.CheckForCBC721TransferFromReceipt(receipt, token.Address, token.Symbol)
+					n.logger.Debug("CBC721 parsing complete", "tx", tx.Hash().String(), "transfers", len(transfers))
+				}
 			}
 
 			if err != nil {
@@ -235,6 +336,8 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 			} else if len(transfers) > 0 {
 				n.logger.Debug("Token transfer detected", "token", token.Symbol, "type", token.Type, "tx", tx.Hash().String())
 				allTransfers = append(allTransfers, transfers...)
+			} else {
+				n.logger.Debug("No transfers found", "token", token.Symbol, "type", token.Type)
 			}
 		}
 
@@ -266,6 +369,8 @@ func (n *Nuntiare) processTokenTransfers(transfers []*blockchain.Transfer) {
 
 // processUserNotification handles notifications for registered wallets
 func (n *Nuntiare) processUserNotification(transfer *blockchain.Transfer) {
+	n.logger.Debug("Processing user notification", "to", transfer.To, "token", transfer.TokenSymbol, "type", transfer.TokenType)
+
 	wallet, shouldNotify, err := n.shouldNotifyWallet(transfer.To)
 	if err != nil {
 		n.logger.Error("Wallet check failed", "error", err, "address", transfer.To, "token", transfer.TokenSymbol)
@@ -273,6 +378,7 @@ func (n *Nuntiare) processUserNotification(transfer *blockchain.Transfer) {
 	}
 
 	if !shouldNotify {
+		n.logger.Debug("Wallet should not be notified", "address", transfer.To, "registered", wallet != nil)
 		return
 	}
 
@@ -297,6 +403,8 @@ func (n *Nuntiare) processSubscriptionPayment(transfer *blockchain.Transfer) {
 		return
 	}
 
+	n.logger.Debug("Checking if address is subscription address", "address", transfer.To, "amount", transfer.Amount)
+
 	isSubscriptionAddr, err := n.repo.IsSubscriptionAddress(transfer.To)
 	if err != nil {
 		n.logger.Error("Failed to check subscription address", "error", err, "address", transfer.To)
@@ -304,6 +412,7 @@ func (n *Nuntiare) processSubscriptionPayment(transfer *blockchain.Transfer) {
 	}
 
 	if !isSubscriptionAddr {
+		n.logger.Debug("Address is not a subscription address", "address", transfer.To)
 		return
 	}
 
@@ -365,33 +474,39 @@ func (n *Nuntiare) processXCBTransfer(tx *types.Transaction) {
 // }
 
 // CheckWalletSubscription checks if the wallet is subscribed
-// It takes all subscription payments for specified address from the repository
-// and checks if the total amount of payments is >= 200 CTN
+// It checks if the subscription expiration date is in the future
 func (n *Nuntiare) CheckWalletSubscription(wallet *models.Wallet) (bool, error) {
-	payments, err := n.repo.GetSubscriptionPayments(wallet.SubscriptionAddress)
-	if err != nil {
-		n.logger.Error("Failed to get subscription payments", "error", err)
-		return false, err
-	}
-	total := float64(0)
-	for _, payment := range payments {
-		total += payment.Amount
-	}
-	n.logger.Debug("Wallet subscription checked ", "subscriptionAddress ", wallet.SubscriptionAddress, "total ", total)
-	if total >= minimalBalance {
+	now := time.Now().Unix()
+
+	n.logger.Debug("Wallet subscription checked",
+		"subscriptionAddress", wallet.SubscriptionAddress,
+		"expiresAt", wallet.SubscriptionExpiresAt,
+		"now", now)
+
+	if wallet.SubscriptionExpiresAt > now {
+		// Subscription is still active
 		return true, nil
 	}
-	// it means that old subscription payments were removed
-	// and the wallet is not subscribed anymore
-	// so we need to remove the subscription from the repository
-	n.repo.UpdateWalletPaidStatus(wallet.Address, false)
+
+	// Subscription has expired, update paid status to false
+	if wallet.Paid {
+		err := n.repo.UpdateWalletPaidStatus(wallet.Address, false)
+		if err != nil {
+			n.logger.Error("Failed to update wallet paid status", "error", err)
+			return false, err
+		}
+	}
+
 	return false, nil
 }
 
 func (n *Nuntiare) GetWallet(address string) (*models.Wallet, error) {
 	wallet, err := n.repo.GetWallet(address)
 	if err != nil {
-		n.logger.Error("Failed to get wallet ", "error ", err)
+		// Only log as error if it's not a "not found" error
+		if !strings.Contains(err.Error(), "record not found") {
+			n.logger.Error("Failed to get wallet", "error", err, "address", address)
+		}
 		return nil, err
 	}
 	return wallet, nil
@@ -402,20 +517,64 @@ func (n *Nuntiare) AddSubscriptionPaymentAndUpdatePaidStatus(
 	amount float64,
 	timestamp int64,
 ) error {
+	// Add payment record for tracking
 	err := n.repo.AddSubscriptionPayment(wallet.SubscriptionAddress, amount, timestamp)
 	if err != nil {
-		n.logger.Error("Failed to add subscription payment ", "error ", err)
+		n.logger.Error("Failed to add subscription payment", "error", err)
 		return err
 	}
-	paid, err := n.CheckWalletSubscription(wallet)
+
+	// Calculate how many months this payment covers
+	// Each 200 CTN = 1 month (30 days)
+	monthsToAdd := amount / subscriptionMonthCost
+	secondsToAdd := int64(monthsToAdd * subscriptionMonthDuration)
+
+	now := time.Now().Unix()
+	var newExpiresAt int64
+
+	// If subscription is still active, extend it from current expiration
+	// Otherwise, start from now
+	if wallet.SubscriptionExpiresAt > now {
+		newExpiresAt = wallet.SubscriptionExpiresAt + secondsToAdd
+		n.logger.Info("Extending active subscription",
+			"address", wallet.Address,
+			"amount", amount,
+			"months", monthsToAdd,
+			"currentExpires", wallet.SubscriptionExpiresAt,
+			"newExpires", newExpiresAt)
+	} else {
+		newExpiresAt = now + secondsToAdd
+		n.logger.Info("Starting new subscription",
+			"address", wallet.Address,
+			"amount", amount,
+			"months", monthsToAdd,
+			"expiresAt", newExpiresAt)
+	}
+
+	// Update wallet's expiration date and paid status
+	err = n.repo.UpdateWalletSubscriptionExpiration(wallet.Address, newExpiresAt)
 	if err != nil {
-		n.logger.Error("Failed to check wallet subscription ", "error ", err)
+		n.logger.Error("Failed to update wallet subscription expiration", "error", err)
+		return err
 	}
-	if paid {
-		err = n.repo.UpdateWalletPaidStatus(wallet.Address, true)
-		if err != nil {
-			n.logger.Error("Failed to update wallet paid status ", "error ", err)
-		}
+
+	err = n.repo.UpdateWalletPaidStatus(wallet.Address, true)
+	if err != nil {
+		n.logger.Error("Failed to update wallet paid status", "error", err)
+		return err
 	}
+
+	// Update the wallet object with new expiration
+	wallet.SubscriptionExpiresAt = newExpiresAt
+	wallet.Paid = true
+
+	return nil
+}
+
+// ProcessTelegramWebhook processes a Telegram webhook update
+func (n *Nuntiare) ProcessTelegramWebhook(update interface{}) error {
+	n.logger.Debug("Received Telegram webhook update", "update", update)
+	// Webhook processing will be handled by the Telegram bot API
+	// This is a placeholder for now - actual implementation depends on bot library
 	return nil
 }
