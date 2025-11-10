@@ -8,7 +8,9 @@ import (
 
 // BlockchainService represents a service that interacts with a blockchain.
 type BlockchainService interface {
+	Run() error
 	NewHeaderSubscription() (<-chan *types.Header, error)
 	GetBlockByNumber(number uint64) (*types.Block, error)
 	GetAddressCTNBalance(address string) (*big.Int, error)
+	GetTransactionReceipt(txHash string) (*types.Receipt, error)
 }

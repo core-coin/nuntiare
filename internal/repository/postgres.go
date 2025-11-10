@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -39,7 +40,7 @@ func NewPostgresDB(user, password, dbname, host string, port int, logger *logger
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %s", err)
 	}
 
-	if err := db.AutoMigrate(&models.Wallet{}, &models.SubscriptionPayment{}, &models.NotificationProvider{}, &models.TelegramProvider{}, &models.EmailProvider{}); err != nil {
+	if err := db.AutoMigrate(&models.Wallet{}, &models.SubscriptionPayment{}, &models.NotificationProvider{}, &models.TelegramProvider{}, &models.EmailProvider{}, &models.AppLock{}); err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate models: %s", err)
 	}
 	logger.Info("Successfully connected to PostgreSQL!")
@@ -147,6 +148,20 @@ func (db *PostgresDB) UpdateWalletPaidStatus(address string, paid bool) error {
 	return nil
 }
 
+func (db *PostgresDB) UpdateWalletSubscriptionExpiration(address string, expiresAt int64) error {
+	var wallet models.Wallet
+	if err := db.Conn.Where("address = ?", address).First(&wallet).Error; err != nil {
+		return fmt.Errorf("failed to get wallet: %s", err)
+	}
+
+	wallet.SubscriptionExpiresAt = expiresAt
+	if err := db.Conn.Save(&wallet).Error; err != nil {
+		return fmt.Errorf("failed to update wallet subscription expiration: %s", err)
+	}
+
+	return nil
+}
+
 func (db *PostgresDB) GetWalletBySubscriptionAddress(subscriptionAddress string) (*models.Wallet, error) {
 	var wallet models.Wallet
 	if err := db.Conn.Where("subscription_address = ?", subscriptionAddress).First(&wallet).Error; err != nil {
@@ -165,33 +180,91 @@ func (db *PostgresDB) GetWalletsNotificationProvider(address string) (*models.No
 	return &notificationProvider, nil
 }
 
-func (db *PostgresDB) AddTelegramProviderChatID(address, chatID string) error {
-	var notificationProvider models.NotificationProvider
-	if err := db.Conn.Joins("TelegramProvider").Preload("TelegramProvider").Where("address = ?", address).First(&notificationProvider).Error; err != nil {
-		return fmt.Errorf("failed to get wallet's notification provider: %s", err)
-	}
-
-	telegramProvider := models.TelegramProvider{
-		NotificationProviderID: notificationProvider.ID,
-		ID:                     notificationProvider.TelegramProvider.ID,
-		Username:               notificationProvider.TelegramProvider.Username,
-		ChatID:                 chatID,
-	}
-	if err := db.Conn.Save(&telegramProvider).Error; err != nil {
+func (db *PostgresDB) AddTelegramProviderChatID(username, chatID string) error {
+	if err := db.Conn.Model(&models.TelegramProvider{}).Where("username = ?", username).Update("chat_id", chatID).Error; err != nil {
 		return fmt.Errorf("failed to add telegram provider chat ID: %s", err)
 	}
 	return nil
 }
 
-func (db *PostgresDB) GetNotificationProviderByTelegramUsername(username string) (*models.NotificationProvider, error) {
-	var notificationProvider models.NotificationProvider
+func (db *PostgresDB) GetNotificationProvidersByTelegramUsername(username string) ([]*models.NotificationProvider, error) {
+	var notificationProviders []*models.NotificationProvider
 	if err := db.Conn.Joins("JOIN telegram_providers ON telegram_providers.notification_provider_id = notification_providers.id").
 		Where("telegram_providers.username = ?", username).
 		Preload("TelegramProvider").
 		Preload("EmailProvider").
-		First(&notificationProvider).Error; err != nil {
-		return nil, fmt.Errorf("failed to get notification provider by telegram username: %s", err)
+		Find(&notificationProviders).Error; err != nil {
+		return nil, fmt.Errorf("failed to get notification providers by telegram username: %s", err)
 	}
 
-	return &notificationProvider, nil
+	return notificationProviders, nil
 }
+
+// TryAcquireLock attempts to acquire a distributed lock
+// Returns true if lock was acquired, false if another instance holds it
+func (db *PostgresDB) TryAcquireLock(lockName, instanceID string, ttlSeconds int) (bool, error) {
+	now := time.Now().Unix()
+	expiresAt := now + int64(ttlSeconds)
+
+	// First, try to delete any expired locks for this lock name
+	if err := db.Conn.Where("lock_name = ? AND expires_at < ?", lockName, now).Delete(&models.AppLock{}).Error; err != nil {
+		db.logger.Error("Failed to cleanup expired lock", "lock", lockName, "error", err)
+	}
+
+	lock := &models.AppLock{
+		LockName:   lockName,
+		InstanceID: instanceID,
+		AcquiredAt: now,
+		ExpiresAt:  expiresAt,
+	}
+
+	// Try to insert the lock (will fail if lock already exists and not expired)
+	// Use a session with silent logger to avoid logging expected duplicate key errors
+	silentLogger := gormLogger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		gormLogger.Config{LogLevel: gormLogger.Silent},
+	)
+	result := db.Conn.Session(&gorm.Session{Logger: silentLogger}).Create(lock)
+	if result.Error != nil {
+		// Lock already exists (someone else holds it or not expired yet)
+		if strings.Contains(result.Error.Error(), "duplicate key") ||
+			strings.Contains(result.Error.Error(), "UNIQUE constraint failed") {
+			db.logger.Debug("Lock already held by another instance", "lock", lockName)
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to acquire lock: %s", result.Error)
+	}
+
+	db.logger.Debug("Lock acquired", "lock", lockName, "instance", instanceID, "ttl", ttlSeconds)
+	return true, nil
+}
+
+// ReleaseLock releases a lock held by this instance
+func (db *PostgresDB) ReleaseLock(lockName, instanceID string) error {
+	result := db.Conn.Where("lock_name = ? AND instance_id = ?", lockName, instanceID).Delete(&models.AppLock{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to release lock: %s", result.Error)
+	}
+
+	if result.RowsAffected > 0 {
+		db.logger.Debug("Lock released", "lock", lockName, "instance", instanceID)
+	}
+
+	return nil
+}
+
+// CleanupExpiredLocks removes all expired locks from the database
+func (db *PostgresDB) CleanupExpiredLocks() error {
+	now := time.Now().Unix()
+	result := db.Conn.Where("expires_at < ?", now).Delete(&models.AppLock{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to cleanup expired locks: %s", result.Error)
+	}
+
+	if result.RowsAffected > 0 {
+		db.logger.Debug("Cleaned up expired locks", "count", result.RowsAffected)
+	}
+
+	return nil
+}
+

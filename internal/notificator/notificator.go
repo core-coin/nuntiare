@@ -1,6 +1,8 @@
 package notificator
 
 import (
+	"runtime/debug"
+
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
@@ -17,6 +19,21 @@ func NewNotificator(logger *logger.Logger, db models.Repository, telNotif *Teleg
 	return &Notificator{logger: logger, db: db, TelegramNotificator: telNotif, EmailNotificator: emailNotif}
 }
 
+// safeGo runs a function in a goroutine with panic recovery
+func (n *Notificator) safeGo(fn func(), context string) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				n.logger.Error("Goroutine panicked",
+					"context", context,
+					"panic", r,
+					"stack", string(debug.Stack()))
+			}
+		}()
+		fn()
+	}()
+}
+
 func (n *Notificator) SendNotification(notification *models.Notification) {
 	notificationProvider, err := n.db.GetWalletsNotificationProvider(notification.Wallet)
 	if err != nil {
@@ -28,10 +45,14 @@ func (n *Notificator) SendNotification(notification *models.Notification) {
 		return
 	}
 	if notificationProvider.TelegramProvider.ChatID != "" {
-		go n.TelegramNotificator.SendNotification(notificationProvider.TelegramProvider.ChatID, notification.String())
+		chatID := notificationProvider.TelegramProvider.ChatID
+		message := notification.String()
+		n.safeGo(func() { n.TelegramNotificator.SendNotification(chatID, message) }, "telegramNotification")
 	}
 	if notificationProvider.EmailProvider.Email != "" {
-		go n.EmailNotificator.SendNotification(notificationProvider.EmailProvider.Email, notification.String())
+		email := notificationProvider.EmailProvider.Email
+		message := notification.String()
+		n.safeGo(func() { n.EmailNotificator.SendNotification(email, message) }, "emailNotification")
 	}
 }
 

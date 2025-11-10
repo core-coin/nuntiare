@@ -8,38 +8,91 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RegisterRequest represents the JSON body for wallet registration
+type RegisterRequest struct {
+	Origin      string `json:"origin" binding:"required"`
+	Subscriber  string `json:"subscriber" binding:"required"`
+	Destination string `json:"destination" binding:"required"`
+	Network     string `json:"network" binding:"required"`
+	Telegram    string `json:"telegram"`
+	Email       string `json:"email"`
+}
+
+// RegisterResponse represents the success response for registration
+type RegisterResponse struct {
+	Success            bool   `json:"success"`
+	Message            string `json:"message"`
+	Address            string `json:"address"`
+	SubscriptionAddress string `json:"subscription_address"`
+}
+
 // register is a handler for the /register endpoint.
 func (s *HTTPServer) register(c *gin.Context) {
-	originator := c.Query("originator")
-	subscriber := c.Query("subscriber")
-	destination := c.Query("destination")
-	network := c.Query("network")
-	telegram := c.Query("telegram")
-	email := c.Query("email")
+	var req RegisterRequest
 
+	// Parse and validate JSON request body
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.logger.Debug("Invalid request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Check if wallet already exists
+	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
+	if err == nil && existingWallet != nil {
+		s.logger.Debug("Wallet already registered", "destination", req.Destination)
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "Wallet already registered",
+			"address": req.Destination,
+			"subscription_address": existingWallet.SubscriptionAddress,
+		})
+		return
+	}
+
+	// Create notification provider
 	notificationProvider := models.NotificationProvider{
 		TelegramProvider: models.TelegramProvider{
-			Username: telegram,
+			Username: req.Telegram,
 		},
 		EmailProvider: models.EmailProvider{
-			Email: email,
+			Email: req.Email,
 		},
-		Address: destination,
+		Address: req.Destination,
 	}
-	err := s.nuntiare.RegisterNewWallet(&models.Wallet{
-		Address:              destination,
-		SubscriptionAddress:  subscriber,
-		Originator:           originator,
+
+	// Register wallet
+	err = s.nuntiare.RegisterNewWallet(&models.Wallet{
+		Address:              req.Destination,
+		SubscriptionAddress:  req.Subscriber,
+		Originator:           req.Origin,
 		Whitelisted:          false,
-		Network:              network,
+		Network:              req.Network,
 		CreatedAt:            time.Now().Unix(),
 		Paid:                 false,
 		NotificationProvider: notificationProvider,
 	})
+
 	if err != nil {
-		s.logger.Debug("failed to register wallet", "error", err)
-		c.JSON(http.StatusInternalServerError, "Failed to register wallet")
+		s.logger.Error("Failed to register wallet", "error", err, "destination", req.Destination)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to register wallet",
+		})
+		return
 	}
+
+	// Success response
+	s.logger.Info("Wallet registered successfully", "destination", req.Destination, "origin", req.Origin)
+	c.JSON(http.StatusCreated, RegisterResponse{
+		Success:             true,
+		Message:             "Wallet registered successfully",
+		Address:             req.Destination,
+		SubscriptionAddress: req.Subscriber,
+	})
 }
 
 // isSubscribed is a handler for the /is_subscribed endpoint.
@@ -61,4 +114,23 @@ func (s *HTTPServer) isSubscribed(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, subscription)
+}
+
+// handleTelegramWebhook processes incoming Telegram webhook updates
+func (s *HTTPServer) handleTelegramWebhook(c *gin.Context) {
+	var update interface{}
+
+	if err := c.ShouldBindJSON(&update); err != nil {
+		s.logger.Debug("Invalid webhook payload", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+
+	if err := s.nuntiare.ProcessTelegramWebhook(update); err != nil {
+		s.logger.Error("Failed to process Telegram update", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "processing failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

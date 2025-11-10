@@ -34,13 +34,13 @@ func NewGocore(apiURL string, logger *logger.Logger, config *config.Config) *Goc
 func (g *Gocore) Run() error {
 	err := g.ConnectToRPC()
 	if err != nil {
-		g.logger.Fatalf("failed to connect to the core RPC server: %s", err)
+		return fmt.Errorf("failed to connect to the core RPC server: %w", err)
 	}
 	err = g.BuildBindings()
 	if err != nil {
-		g.logger.Fatalf("failed to build bindings: %s", err)
+		return fmt.Errorf("failed to build bindings: %w", err)
 	}
-	return err
+	return nil
 }
 
 func (g *Gocore) ConnectToRPC() error {
@@ -55,12 +55,12 @@ func (g *Gocore) ConnectToRPC() error {
 func (g *Gocore) BuildBindings() error {
 	ctnAddress, err := common.HexToAddress(g.config.SmartContractAddress)
 	if err != nil {
-		g.logger.Fatalf("failed to parse Core Token contract address: %s", err)
+		return fmt.Errorf("failed to parse Core Token contract address: %w", err)
 	}
 
 	parsedABI, err := abi.JSON(strings.NewReader(CTNABI))
 	if err != nil {
-		g.logger.Fatalf("failed to parse Core Token ABI: %s", err)
+		return fmt.Errorf("failed to parse Core Token ABI: %w", err)
 	}
 
 	contract := bind.NewBoundContract(ctnAddress, parsedABI, g.client, g.client, g.client)
@@ -82,8 +82,12 @@ func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
 }
 
 func (g *Gocore) Close() error {
-	g.subscription.Unsubscribe()
-	g.client.Close()
+	if g.subscription != nil {
+		g.subscription.Unsubscribe()
+	}
+	if g.client != nil {
+		g.client.Close()
+	}
 
 	return nil
 }
@@ -105,4 +109,13 @@ func (g *Gocore) GetAddressCTNBalance(wallet string) (*big.Int, error) {
 	}
 	balance := results[0].(*big.Int)
 	return balance, nil
+}
+
+func (g *Gocore) GetTransactionReceipt(txHash string) (*types.Receipt, error) {
+	hash := common.HexToHash(txHash)
+	receipt, err := g.client.TransactionReceipt(context.Background(), hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction receipt: %s", err)
+	}
+	return receipt, nil
 }

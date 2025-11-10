@@ -16,6 +16,8 @@ type Wallet struct {
 	Whitelisted bool `json:"whitelisted" gorm:"column:whitelisted"`
 	// Paid is a flag indicating if the wallet has paid for the subscription.
 	Paid bool `json:"paid" gorm:"column:paid"`
+	// SubscriptionExpiresAt is the Unix timestamp when the subscription expires.
+	SubscriptionExpiresAt int64 `json:"subscription_expires_at" gorm:"column:subscription_expires_at"`
 	// NotificationProvider is the associated notification provider for the wallet.
 	NotificationProvider NotificationProvider `json:"notification_provider" gorm:"foreignKey:Address;references:Address;constraint:OnDelete:CASCADE"`
 }

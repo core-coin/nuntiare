@@ -5,14 +5,16 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/core-coin/go-core/v2/common"
 	"github.com/core-coin/nuntiare/internal/blockchain"
 	"github.com/core-coin/nuntiare/internal/config"
 	"github.com/core-coin/nuntiare/internal/http_api"
 	"github.com/core-coin/nuntiare/internal/notificator"
 	"github.com/core-coin/nuntiare/internal/nuntiare"
 	"github.com/core-coin/nuntiare/internal/repository"
+	"github.com/core-coin/nuntiare/internal/wellknown"
 	"github.com/core-coin/nuntiare/pkg/logger"
 	"github.com/urfave/cli/v2"
 )
@@ -117,8 +119,6 @@ func run(c *cli.Context) error {
 		cfg.SMTPSender = c.String("email-smtp-sender")
 	}
 
-	common.DefaultNetworkID = common.NetworkID(cfg.NetworkID.Int64())
-
 	// Initialize logger
 	log, err := logger.NewLogger(cfg.Development)
 	if err != nil {
@@ -131,23 +131,56 @@ func run(c *cli.Context) error {
 		return fmt.Errorf("failed to connect to database: %v", err)
 	}
 
-	// Initialize blockchain service
+	// Initialize well-known service to fetch and update token list
+	wellKnownService := wellknown.NewWellKnownService(log, cfg)
+	log.Info("Starting well-known token service for periodic updates")
+	wellKnownService.StartPeriodicUpdate()
+
+	// Initialize blockchain service (connection will be established in background)
 	blockchainService := blockchain.NewGocore(cfg.BlockchainServiceURL, log, cfg)
-	blockchainService.Run()
 
 	// Initialize notificators
-	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db)
+	webhookMode := cfg.TelegramWebhookURL != ""
+	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db, webhookMode)
+
+	// Set webhook if URL is configured
+	if webhookMode && telegramNotificator != nil {
+		if err := telegramNotificator.SetWebhook(cfg.TelegramWebhookURL); err != nil {
+			log.Error("Failed to set Telegram webhook", "error", err)
+		} else {
+			log.Info("Telegram webhook configured successfully", "url", cfg.TelegramWebhookURL)
+		}
+	}
+
 	emailNotificator := notificator.NewEmailNotificator(log, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPAlternativePort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPSender, db)
-	notificator := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
+	notificatorService := notificator.NewNotificator(log, db, telegramNotificator, emailNotificator)
 	// Initialize API server
 	// Create Nuntiare instance
-	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificator, log, cfg)
+	nuntiareApp := nuntiare.NewNuntiare(db, blockchainService, notificatorService, wellKnownService, log, cfg)
 
 	apiServer := http_api.NewHTTPServer(nuntiareApp, cfg.APIPort, log)
 
-	go apiServer.Start()
-	// Start the application
-	nuntiareApp.Start()
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
+	go apiServer.Start()
+
+	// Start the application in a goroutine
+	go nuntiareApp.Start()
+
+	// Wait for shutdown signal
+	sig := <-sigChan
+	log.Info("Received shutdown signal", "signal", sig.String())
+
+	// Graceful shutdown
+	log.Info("Shutting down gracefully...")
+
+	// Close blockchain service connection
+	if err := blockchainService.Close(); err != nil {
+		log.Error("Error closing blockchain service", "error", err)
+	}
+
+	log.Info("Shutdown complete")
 	return nil
 }

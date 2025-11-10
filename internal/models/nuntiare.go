@@ -19,4 +19,7 @@ type NuntiareI interface {
 	// CheckWalletSubscription checks if the wallet is subscribed.
 	// Data is taken from the repository.
 	CheckWalletSubscription(wallet *Wallet) (bool, error)
+
+	// ProcessTelegramWebhook processes a Telegram webhook update
+	ProcessTelegramWebhook(update interface{}) error
 }
