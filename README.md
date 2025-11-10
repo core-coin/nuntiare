@@ -69,9 +69,12 @@ This setup starts a `postgres` container and the `nuntiare` service exposed on `
 | `API_PORT` | HTTP API port. | `6532` |
 | `DEVELOPMENT` | Enables more verbose logging when `true`. | `false` |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather). Needed for Telegram notifications. | _none_ |
+| `TELEGRAM_WEBHOOK_URL` | Telegram webhook URL for receiving updates. Leave empty to use polling mode. | _none_ |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_ALTERNATIVE_PORT` | SMTP server host and ports. | `smtp.example.com` / `587` / `465` |
 | `SMTP_USER` / `SMTP_PASSWORD` | SMTP authentication credentials. | _none_ |
 | `SMTP_SENDER` | Email sender address used in outgoing messages. | _none_ |
+| `SUBSCRIPTION_MONTH_COST` | Cost in CTN tokens for one month of subscription. | `200.0` |
+| `SUBSCRIPTION_MONTH_DURATION` | Duration of one subscription month in seconds. | `2592000` (30 days) |
 
 All options are also exposed as CLI flags. Run `go run ./cmd/nuntiare --help` to see the full list (`--postgres-user`, `--api-port`, `--telegram-bot-token`, etc.). Flag values override environment variables.
 
@@ -164,7 +167,7 @@ curl "http://localhost:6532/api/v1/is_subscribed?address=cb9876543210fedcba98765
   - **CBC721 token transfers** (NFTs) for all NFT contracts in the .well-known registry
   - **CTN transfers** to subscription addresses for payment tracking
 - The token list is automatically fetched from the .well-known service on startup and refreshed every hour to ensure new tokens are detected.
-- **Subscription Payments**: Only the CTN token (configured via `SMART_CONTRACT_ADDRESS`) is used for subscription payments. Wallets stay subscribed while their accumulated CTN payments are at least 200 CTN within the trailing month. Payments are tracked by monitoring transfers to each wallet's `SubscriptionAddress`.
+- **Subscription Payments**: Only the CTN token (configured via `SMART_CONTRACT_ADDRESS`) is used for subscription payments. Subscription cost and duration are configurable via `SUBSCRIPTION_MONTH_COST` (default: 200 CTN) and `SUBSCRIPTION_MONTH_DURATION` (default: 30 days). Payments are tracked by monitoring transfers to each wallet's `SubscriptionAddress`, and subscriptions extend proportionally based on the amount received.
 - Telegram notifications are sent once the bot has a chat ID for the registered username (user must send `/start`). Email notifications use basic SMTP authentication.
 - **Core Blockchain Hashing**: The Core blockchain uses SHA3-NIST for hashing instead of Keccak-256 used by Ethereum.
 
@@ -203,7 +206,7 @@ The service automatically detects transfers for all tokens in the registry and s
 
 ## Troubleshooting
 - **Cannot connect to Core RPC**: verify `BLOCKCHAIN_SERVICE_URL`, ensure the node accepts WebSocket connections, and that the smart contract address is correct. The service will retry subscriptions every five seconds if the channel closes.
-- **No notifications after registering**: confirm the wallet paid at least 200 CTN to the assigned subscription address and that the Telegram user initiated the bot session (if using Telegram). Check the database tables to ensure the wallet registration succeeded.
+- **No notifications after registering**: confirm the wallet paid the required CTN amount (configured via `SUBSCRIPTION_MONTH_COST`, default 200 CTN) to the assigned subscription address and that the Telegram user initiated the bot session (if using Telegram). Check the database tables to ensure the wallet registration succeeded.
 - **Email errors**: validate SMTP credentials and ports. The service currently uses TLS/STARTTLS on the primary port and falls back to the alternative port if configured.
 - **Well-known service errors**: verify that `WELL_KNOWN_URL` is correct and accessible. Check that `NETWORK` matches the network name used by the well-known service (e.g., `devin` for testnet, `mainnet` for production). The service will log errors but continue operating with previously cached tokens if the well-known service is temporarily unavailable.
 
