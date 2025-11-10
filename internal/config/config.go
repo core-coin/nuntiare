@@ -39,6 +39,10 @@ type Config struct {
 
 	// Well-known configuration
 	WellKnownURL string
+
+	// Subscription configuration
+	SubscriptionMonthCost     float64 // Cost in CTN for one month of subscription
+	SubscriptionMonthDuration float64 // Duration of one month in seconds
 }
 
 // GetNetworkName returns the network name for well-known API based on NetworkID
@@ -81,6 +85,9 @@ func LoadConfig() (*Config, error) {
 		APIPort: getEnvAsInt("API_PORT", 6532),
 
 		WellKnownURL: getEnv("WELL_KNOWN_URL", "https://coreblockchain.net"),
+
+		SubscriptionMonthCost:     getEnvAsFloat64("SUBSCRIPTION_MONTH_COST", 200.0),      // 200 CTN per month
+		SubscriptionMonthDuration: getEnvAsFloat64("SUBSCRIPTION_MONTH_DURATION", 2592000), // 30 days in seconds
 	}
 
 	// Set default network ID before validation (required for address validation)
@@ -153,6 +160,15 @@ func getEnvAsBool(name string, defaultValue bool) bool {
 func getEnvAsBigInt(name string, defaultValue *big.Int) *big.Int {
 	if valueStr, exists := os.LookupEnv(name); exists {
 		if value, ok := new(big.Int).SetString(valueStr, 10); ok {
+			return value
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsFloat64(name string, defaultValue float64) float64 {
+	if valueStr, exists := os.LookupEnv(name); exists {
+		if value, err := strconv.ParseFloat(valueStr, 64); err == nil {
 			return value
 		}
 	}
