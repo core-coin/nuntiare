@@ -17,13 +17,6 @@ import (
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
 
-const (
-	// subscriptionMonthCost is the cost in CTN for one month of subscription
-	subscriptionMonthCost = 200.0 // CTN
-	// subscriptionMonthDuration is the duration of one month in seconds
-	subscriptionMonthDuration = 30 * 24 * 60 * 60 // 30 days in seconds
-)
-
 // TokenCache interface for getting cached tokens
 type TokenCache interface {
 	GetAllTokens() []*models.Token
@@ -525,9 +518,8 @@ func (n *Nuntiare) AddSubscriptionPaymentAndUpdatePaidStatus(
 	}
 
 	// Calculate how many months this payment covers
-	// Each 200 CTN = 1 month (30 days)
-	monthsToAdd := amount / subscriptionMonthCost
-	secondsToAdd := int64(monthsToAdd * subscriptionMonthDuration)
+	monthsToAdd := amount / n.config.SubscriptionMonthCost
+	secondsToAdd := int64(monthsToAdd * n.config.SubscriptionMonthDuration)
 
 	now := time.Now().Unix()
 	var newExpiresAt int64
