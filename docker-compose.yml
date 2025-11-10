@@ -1,0 +1,63 @@
+version: '3.8'
+services:
+  nuntiare-1:
+    container_name: nuntiare-instance-1
+    build: .
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - BLOCKCHAIN_SERVICE_URL=${BLOCKCHAIN_SERVICE_URL}
+      - SMART_CONTRACT_ADDRESS=${SMART_CONTRACT_ADDRESS}
+      - NETWORK_ID=${NETWORK_ID}
+      - WELL_KNOWN_URL=${WELL_KNOWN_URL}
+      - API_PORT=6532
+    ports:
+      - "6532:6532"
+    depends_on:
+      - postgres
+
+  nuntiare-2:
+    container_name: nuntiare-instance-2
+    build: .
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - BLOCKCHAIN_SERVICE_URL=${BLOCKCHAIN_SERVICE_URL}
+      - SMART_CONTRACT_ADDRESS=${SMART_CONTRACT_ADDRESS}
+      - NETWORK_ID=${NETWORK_ID}
+      - WELL_KNOWN_URL=${WELL_KNOWN_URL}
+      - API_PORT=6532
+    ports:
+      - "6533:6532"
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  nginx:
+    build:
+      context: ./conf
+      dockerfile: Dockerfile.nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - nuntiare-1
+      - nuntiare-2
+
+volumes:
+  postgres_data:
