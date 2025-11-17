@@ -22,9 +22,9 @@ type RegisterRequest struct {
 
 // RegisterResponse represents the success response for registration
 type RegisterResponse struct {
-	Success            bool   `json:"success"`
-	Message            string `json:"message"`
-	Address            string `json:"address"`
+	Success             bool   `json:"success"`
+	Message             string `json:"message"`
+	Address             string `json:"address"`
 	SubscriptionAddress string `json:"subscription_address"`
 }
 
@@ -43,15 +43,6 @@ func (s *HTTPServer) register(c *gin.Context) {
 	}
 
 	// Validate address formats
-	if err := validation.ValidateAddress(req.Origin); err != nil {
-		s.logger.Debug("Invalid origin address", "error", err, "address", req.Origin)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Invalid origin address: " + err.Error(),
-		})
-		return
-	}
-
 	if err := validation.ValidateAddress(req.Subscriber); err != nil {
 		s.logger.Debug("Invalid subscriber address", "error", err, "address", req.Subscriber)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -75,9 +66,9 @@ func (s *HTTPServer) register(c *gin.Context) {
 	if err == nil && existingWallet != nil {
 		s.logger.Debug("Wallet already registered", "destination", req.Destination)
 		c.JSON(http.StatusConflict, gin.H{
-			"success": false,
-			"error":   "Wallet already registered",
-			"address": req.Destination,
+			"success":              false,
+			"error":                "Wallet already registered",
+			"address":              req.Destination,
 			"subscription_address": existingWallet.SubscriptionAddress,
 		})
 		return
