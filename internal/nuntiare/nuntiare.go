@@ -1,12 +1,14 @@
 package nuntiare
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"math/big"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/core-coin/go-core/v2/core/types"
@@ -34,6 +36,14 @@ type Nuntiare struct {
 	gocore      models.BlockchainService
 	notificator models.NotificationService
 	tokenCache  TokenCache
+
+	// Context for graceful shutdown
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	// Semaphore to limit concurrent notification goroutines (prevents goroutine explosion)
+	notificationSem chan struct{}
 }
 
 // generateInstanceID creates a unique identifier for this instance
@@ -58,20 +68,35 @@ func NewNuntiare(
 	instanceID := generateInstanceID()
 	logger.Info("Initializing Nuntiare instance", "instance_id", instanceID)
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Nuntiare{
-		repo:        repo,
-		gocore:      gocore,
-		logger:      logger,
-		notificator: notificator,
-		tokenCache:  tokenCache,
-		config:      config,
-		instanceID:  instanceID,
+		repo:            repo,
+		gocore:          gocore,
+		logger:          logger,
+		notificator:     notificator,
+		tokenCache:      tokenCache,
+		config:          config,
+		instanceID:      instanceID,
+		ctx:             ctx,
+		cancel:          cancel,
+		notificationSem: make(chan struct{}, 100), // Limit to 100 concurrent notification goroutines
 	}
 }
 
-// safeGo runs a function in a goroutine with panic recovery
+// Stop gracefully stops the Nuntiare instance
+func (n *Nuntiare) Stop() {
+	n.logger.Info("Stopping Nuntiare instance", "instance_id", n.instanceID)
+	n.cancel() // Signal all goroutines to stop
+	n.wg.Wait() // Wait for all goroutines to finish
+	n.logger.Info("Nuntiare instance stopped", "instance_id", n.instanceID)
+}
+
+// safeGo runs a function in a goroutine with panic recovery and semaphore-based limiting
 func (n *Nuntiare) safeGo(fn func(), context string) {
+	n.wg.Add(1)
 	go func() {
+		defer n.wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				n.logger.Error("Goroutine panicked",
@@ -80,7 +105,17 @@ func (n *Nuntiare) safeGo(fn func(), context string) {
 					"stack", string(debug.Stack()))
 			}
 		}()
-		fn()
+
+		// Acquire semaphore slot (blocks if at limit)
+		select {
+		case n.notificationSem <- struct{}{}:
+			defer func() { <-n.notificationSem }() // Release slot when done
+			fn()
+		case <-n.ctx.Done():
+			// Context cancelled, don't start the goroutine
+			n.logger.Debug("Goroutine cancelled before execution", "context", context)
+			return
+		}
 	}()
 }
 
@@ -125,32 +160,49 @@ func weiToXCB(wei *big.Int) float64 {
 // Start starts the Nuntiare application
 func (n *Nuntiare) Start() {
 	// Start a goroutine to clean up unpaid subscriptions
+	n.wg.Add(1)
 	go func() {
+		defer n.wg.Done()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			n.logger.Debug("Cleaning up unpaid subscriptions")
-			// Remove wallets that were created but never paid within 10 minutes
-			err := n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(10*time.Minute.Seconds()))
-			if err != nil {
-				n.logger.Error("Failed to remove unpaid subscriptions", "error", err)
+		for {
+			select {
+			case <-ticker.C:
+				n.logger.Debug("Cleaning up unpaid subscriptions")
+				// Remove wallets that were created but never paid within 10 minutes
+				err := n.repo.RemoveUnpaidSubscriptions(time.Now().Unix() - int64(10*time.Minute.Seconds()))
+				if err != nil {
+					n.logger.Error("Failed to remove unpaid subscriptions", "error", err)
+				}
+			case <-n.ctx.Done():
+				n.logger.Debug("Unpaid subscription cleanup stopped")
+				return
 			}
 		}
 	}()
 
 	// HA: Start a goroutine to cleanup expired locks (every 1 minute)
+	n.wg.Add(1)
 	go func() {
+		defer n.wg.Done()
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			n.logger.Debug("Cleaning up expired locks")
-			if err := n.repo.CleanupExpiredLocks(); err != nil {
-				n.logger.Error("Failed to cleanup expired locks", "error", err)
+		for {
+			select {
+			case <-ticker.C:
+				n.logger.Debug("Cleaning up expired locks")
+				if err := n.repo.CleanupExpiredLocks(); err != nil {
+					n.logger.Error("Failed to cleanup expired locks", "error", err)
+				}
+			case <-n.ctx.Done():
+				n.logger.Debug("Lock cleanup stopped")
+				return
 			}
 		}
 	}()
 
 	// Start watching for new transactions (handles connection retries internally)
+	n.wg.Add(1)
 	go n.WatchTransfers()
 }
 
@@ -178,6 +230,8 @@ func (n *Nuntiare) initializeBlockchain() error {
 // WatchTransfers starts watching for new transfers inside blockchain
 // If tx receiver is a registered wallet, it sends a notification if wallet has subscribtion
 func (n *Nuntiare) WatchTransfers() {
+	defer n.wg.Done()
+
 	backoff := 1 * time.Second
 	maxBackoff := 60 * time.Second
 	connectionBackoff := 5 * time.Second
@@ -186,13 +240,27 @@ func (n *Nuntiare) WatchTransfers() {
 	n.logger.Info("Initializing blockchain connection for transfer monitoring...")
 
 	for {
+		// Check if context is cancelled
+		select {
+		case <-n.ctx.Done():
+			n.logger.Info("WatchTransfers stopped due to context cancellation")
+			return
+		default:
+		}
+
 		// Try to connect to blockchain
 		if err := n.initializeBlockchain(); err != nil {
 			n.logger.Warn("Failed to initialize blockchain connection, will retry",
 				"error", err,
 				"retry_in", connectionBackoff)
-			time.Sleep(connectionBackoff)
-			continue
+
+			select {
+			case <-time.After(connectionBackoff):
+				continue
+			case <-n.ctx.Done():
+				n.logger.Info("WatchTransfers stopped during connection retry")
+				return
+			}
 		}
 
 		n.logger.Info("Successfully connected to blockchain service")
@@ -201,43 +269,87 @@ func (n *Nuntiare) WatchTransfers() {
 
 	// Now start watching for transfers
 	for {
+		// Check if context is cancelled before creating new subscription
+		select {
+		case <-n.ctx.Done():
+			n.logger.Info("WatchTransfers stopped before creating subscription")
+			return
+		default:
+		}
+
 		channel, err := n.gocore.NewHeaderSubscription()
 		if err != nil {
 			n.logger.Error("Failed to subscribe to new head, will retry", "error", err, "retry_in", backoff)
-			time.Sleep(backoff)
-			backoff = backoff * 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
+
+			select {
+			case <-time.After(backoff):
+				backoff = backoff * 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				// Try to reinitialize blockchain connection
+				if err := n.initializeBlockchain(); err != nil {
+					n.logger.Debug("Failed to reinitialize blockchain", "error", err)
+				}
+				continue
+			case <-n.ctx.Done():
+				n.logger.Info("WatchTransfers stopped during reconnection backoff")
+				return
 			}
-			// Try to reinitialize blockchain connection
-			if err := n.initializeBlockchain(); err != nil {
-				n.logger.Debug("Failed to reinitialize blockchain", "error", err)
-			}
-			continue
 		}
 
 		// Reset backoff on successful connection
 		backoff = 1 * time.Second
 		n.logger.Info("Successfully subscribed to blockchain headers")
 
-		for header := range channel {
-			n.logger.Debug("New block header received", "number", header.Number)
+		// Process headers with proper cleanup
+		func() {
+			for {
+				select {
+				case header, ok := <-channel:
+					if !ok {
+						// Channel closed, break inner loop to retry subscription
+						n.logger.Warn("Header channel closed, will restart subscription")
+						return
+					}
 
-			// Check if the block has transactions
-			if !header.EmptyBody() {
-				n.logger.Debug("Block has transactions")
-				block, err := n.gocore.GetBlockByNumber(header.Number.Uint64())
-				if err != nil {
-					n.logger.Error("Failed to get block by number", "number", header.Number, "error", err)
-					continue
+					n.logger.Debug("New block header received", "number", header.Number)
+
+					// Check if the block has transactions
+					if !header.EmptyBody() {
+						n.logger.Debug("Block has transactions")
+						block, err := n.gocore.GetBlockByNumber(header.Number.Uint64())
+						if err != nil {
+							n.logger.Error("Failed to get block by number", "number", header.Number, "error", err)
+							continue
+						}
+						n.checkBlock(block)
+					}
+
+				case <-n.ctx.Done():
+					// Context cancelled, clean up and exit
+					n.logger.Info("WatchTransfers stopped while processing headers")
+					// Drain the channel to allow goroutine cleanup
+					go func() {
+						for range channel {
+							// Discard remaining headers
+						}
+					}()
+					return
 				}
-				n.checkBlock(block)
 			}
-		}
-		n.logger.Error("Channel closed, restarting subscription")
-		time.Sleep(backoff)
-	}
+		}()
 
+		// If we reach here, channel was closed, retry after backoff
+		select {
+		case <-time.After(backoff):
+			n.logger.Info("Retrying blockchain subscription after channel close")
+			continue
+		case <-n.ctx.Done():
+			n.logger.Info("WatchTransfers stopped during retry backoff")
+			return
+		}
+	}
 }
 
 func (n *Nuntiare) checkBlock(block *types.Block) {

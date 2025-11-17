@@ -144,9 +144,14 @@ func run(c *cli.Context) error {
 	telegramNotificator := notificator.NewTelegramNotificator(log, cfg.TelegramBotToken, db, webhookMode)
 
 	// Set webhook if URL is configured
+	// Note: With multiple instances, they will all attempt to set the same webhook
+	// This is safe because Telegram accepts the last webhook set, and with retry logic
+	// and exponential backoff, instances won't overwhelm the API
 	if webhookMode && telegramNotificator != nil {
 		if err := telegramNotificator.SetWebhook(cfg.TelegramWebhookURL); err != nil {
-			log.Error("Failed to set Telegram webhook", "error", err)
+			// Don't fatal on webhook errors - log and continue
+			// The application can still process blocks and other instances might succeed
+			log.Warn("Failed to set Telegram webhook, continuing anyway", "error", err)
 		} else {
 			log.Info("Telegram webhook configured successfully", "url", cfg.TelegramWebhookURL)
 		}
@@ -175,6 +180,9 @@ func run(c *cli.Context) error {
 
 	// Graceful shutdown
 	log.Info("Shutting down gracefully...")
+
+	// Stop the Nuntiare instance (this will cancel context and wait for goroutines)
+	nuntiareApp.Stop()
 
 	// Close blockchain service connection
 	if err := blockchainService.Close(); err != nil {

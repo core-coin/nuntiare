@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
@@ -109,22 +110,77 @@ func (t *TelegramNotificator) handler(ctx context.Context, b *bot.Bot, update *t
 	}
 }
 
-// SetWebhook configures the Telegram webhook URL
+// SetWebhook configures the Telegram webhook URL with retry logic and exponential backoff
 func (t *TelegramNotificator) SetWebhook(webhookURL string) error {
 	if t.bot == nil {
 		return fmt.Errorf("telegram bot not initialized")
 	}
 
 	ctx := context.Background()
-	_, err := t.bot.SetWebhook(ctx, &bot.SetWebhookParams{
-		URL: webhookURL,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to set webhook: %w", err)
+	maxRetries := 5
+	baseBackoff := 2 // Start with 2 seconds as Telegram suggests "retry after 1"
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		_, err := t.bot.SetWebhook(ctx, &bot.SetWebhookParams{
+			URL: webhookURL,
+		})
+		if err == nil {
+			t.logger.Info("Telegram webhook configured successfully", "url", webhookURL)
+			return nil
+		}
+
+		// Check if it's a rate limit error
+		errMsg := err.Error()
+		if !containsRateLimit(errMsg) {
+			// Not a rate limit error, fail immediately
+			return fmt.Errorf("failed to set webhook: %w", err)
+		}
+
+		// Calculate backoff with exponential increase
+		backoff := baseBackoff * (1 << attempt) // 2s, 4s, 8s, 16s, 32s
+		if backoff > 60 {
+			backoff = 60 // Cap at 60 seconds
+		}
+
+		if attempt < maxRetries-1 {
+			t.logger.Warn("Rate limited by Telegram API, retrying",
+				"attempt", attempt+1,
+				"max_retries", maxRetries,
+				"backoff_seconds", backoff,
+				"error", err)
+			time.Sleep(time.Duration(backoff) * time.Second)
+		}
 	}
 
-	t.logger.Info("Telegram webhook configured successfully", "url", webhookURL)
-	return nil
+	return fmt.Errorf("failed to set webhook after %d retries due to rate limiting", maxRetries)
+}
+
+// containsRateLimit checks if an error message indicates a rate limit
+func containsRateLimit(errMsg string) bool {
+	rateLimitIndicators := []string{
+		"too many requests",
+		"retry after",
+		"rate limit",
+		"Too Many Requests",
+	}
+	for _, indicator := range rateLimitIndicators {
+		if len(errMsg) > 0 && len(indicator) > 0 &&
+			(errMsg == indicator || len(errMsg) > len(indicator) &&
+			(errMsg[:len(indicator)] == indicator || contains(errMsg, indicator))) {
+			return true
+		}
+	}
+	return false
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessUpdate processes a webhook update
