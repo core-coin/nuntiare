@@ -1,6 +1,7 @@
 package notificator
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -87,7 +88,7 @@ func (e *EmailNotificator) SendNotification(to, message string) {
 	e.logger.Error("Failed to send email notification after retries", "to", to, "attempts", MaxEmailRetries, "error", lastErr)
 }
 
-// sendMailWithTimeout sends an email with a timeout
+// sendMailWithTimeout sends an email with a timeout and TLS support
 func (e *EmailNotificator) sendMailWithTimeout(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
 	// Create a dialer with timeout
 	dialer := &net.Dialer{
@@ -112,6 +113,17 @@ func (e *EmailNotificator) sendMailWithTimeout(addr string, auth smtp.Auth, from
 		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 	defer client.Close()
+
+	// Start TLS if the server supports it (STARTTLS for port 587)
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		tlsConfig := &tls.Config{
+			ServerName: e.SMTPHost,
+			MinVersion: tls.VersionTLS12,
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("failed to start TLS: %w", err)
+		}
+	}
 
 	// Authenticate if auth is provided
 	if auth != nil {
