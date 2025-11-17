@@ -24,4 +24,7 @@ type Repository interface {
 	TryAcquireLock(lockName, instanceID string, ttlSeconds int) (bool, error)
 	ReleaseLock(lockName, instanceID string) error
 	CleanupExpiredLocks() error
+
+	// Lifecycle management
+	Close() error
 }

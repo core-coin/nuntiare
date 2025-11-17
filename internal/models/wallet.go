@@ -7,15 +7,15 @@ type Wallet struct {
 	// Address is the address of the wallet.
 	Address string `json:"address" gorm:"column:address;primaryKey"`
 	// SubscriptionAddress is the address which we use to check if user has subscription.
-	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address"`
+	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address;index"`
 	// Network is the network the wallet is on. (xcb, btc etc.)
 	Network string `json:"network" gorm:"column:network"`
 	// CreatedAt is the date when the wallet was created.
-	CreatedAt int64 `json:"created_at" gorm:"column:created_at"`
+	CreatedAt int64 `json:"created_at" gorm:"column:created_at;index"`
 	// Whitelisted is a flag indicating if the wallet is whitelisted.
 	Whitelisted bool `json:"whitelisted" gorm:"column:whitelisted"`
 	// Paid is a flag indicating if the wallet has paid for the subscription.
-	Paid bool `json:"paid" gorm:"column:paid"`
+	Paid bool `json:"paid" gorm:"column:paid;index"`
 	// SubscriptionExpiresAt is the Unix timestamp when the subscription expires.
 	SubscriptionExpiresAt int64 `json:"subscription_expires_at" gorm:"column:subscription_expires_at"`
 	// NotificationProvider is the associated notification provider for the wallet.

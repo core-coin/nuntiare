@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/core-coin/nuntiare/internal/models"
 	"github.com/core-coin/nuntiare/pkg/logger"
@@ -11,18 +12,30 @@ import (
 	tgModels "github.com/go-telegram/bot/models"
 )
 
+const (
+	// Telegram webhook retry settings
+	MaxWebhookRetries  = 5
+	BaseBackoffSeconds = 2
+	MaxBackoffSeconds  = 60
+)
+
 type TelegramNotificator struct {
 	logger      *logger.Logger
 	bot         *bot.Bot
 	db          models.Repository
 	webhookMode bool
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repository, webhookMode bool) *TelegramNotificator {
+	ctx, cancel := context.WithCancel(context.Background())
 	provider := &TelegramNotificator{
 		logger:      logger,
 		db:          db,
 		webhookMode: webhookMode,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 
 	// If no token provided, return provider with nil bot (disabled)
@@ -43,7 +56,7 @@ func NewTelegramNotificator(logger *logger.Logger, token string, db models.Repos
 
 	// Only start polling if not in webhook mode
 	if !webhookMode {
-		go b.Start(context.Background())
+		go b.Start(ctx)
 		logger.Info("Telegram bot initialized successfully (polling mode)")
 	} else {
 		logger.Info("Telegram bot initialized successfully (webhook mode)")
@@ -116,15 +129,60 @@ func (t *TelegramNotificator) SetWebhook(webhookURL string) error {
 	}
 
 	ctx := context.Background()
-	_, err := t.bot.SetWebhook(ctx, &bot.SetWebhookParams{
-		URL: webhookURL,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to set webhook: %w", err)
+
+	for attempt := 0; attempt < MaxWebhookRetries; attempt++ {
+		_, err := t.bot.SetWebhook(ctx, &bot.SetWebhookParams{
+			URL: webhookURL,
+		})
+		if err == nil {
+			t.logger.Info("Telegram webhook configured successfully", "url", webhookURL)
+			return nil
+		}
+
+		// Check if it's a rate limit error
+		if !isRateLimitError(err) {
+			// Not a rate limit error, fail immediately
+			return fmt.Errorf("failed to set webhook: %w", err)
+		}
+
+		// Calculate backoff with exponential increase
+		backoff := BaseBackoffSeconds * (1 << attempt) // 2s, 4s, 8s, 16s, 32s
+		if backoff > MaxBackoffSeconds {
+			backoff = MaxBackoffSeconds
+		}
+
+		if attempt < MaxWebhookRetries-1 {
+			t.logger.Warn("Rate limited by Telegram API, retrying",
+				"attempt", attempt+1,
+				"max_retries", MaxWebhookRetries,
+				"backoff_seconds", backoff,
+				"error", err)
+			time.Sleep(time.Duration(backoff) * time.Second)
+		}
 	}
 
-	t.logger.Info("Telegram webhook configured successfully", "url", webhookURL)
-	return nil
+	return fmt.Errorf("failed to set webhook after %d retries due to rate limiting", MaxWebhookRetries)
+}
+
+// isRateLimitError checks if an error indicates a rate limit from Telegram API
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	rateLimitIndicators := []string{
+		"too many requests",
+		"retry after",
+		"rate limit",
+	}
+
+	for _, indicator := range rateLimitIndicators {
+		if strings.Contains(errMsg, indicator) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessUpdate processes a webhook update
@@ -136,4 +194,12 @@ func (t *TelegramNotificator) ProcessUpdate(update *tgModels.Update) error {
 	// Process the update using the existing handler
 	t.handler(context.Background(), t.bot, update)
 	return nil
+}
+
+// Stop gracefully stops the Telegram bot (for polling mode)
+func (t *TelegramNotificator) Stop() {
+	if t.cancel != nil {
+		t.logger.Info("Stopping Telegram bot")
+		t.cancel()
+	}
 }

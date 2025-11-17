@@ -4,6 +4,9 @@ type NuntiareI interface {
 	// Start starts the application
 	Start()
 
+	// Stop gracefully stops the application and waits for goroutines to finish
+	Stop()
+
 	// RegisterNewWallet adds a new wallet to the repository
 	RegisterNewWallet(*Wallet) error
 	// GetWallet returns a wallet from the repository

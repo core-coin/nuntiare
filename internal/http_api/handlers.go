@@ -2,9 +2,11 @@ package http_api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/core-coin/nuntiare/internal/models"
+	"github.com/core-coin/nuntiare/pkg/validation"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,9 +15,9 @@ type RegisterRequest struct {
 	Origin      string `json:"origin" binding:"required"`
 	Subscriber  string `json:"subscriber" binding:"required"`
 	Destination string `json:"destination" binding:"required"`
-	Network     string `json:"network" binding:"required"`
+	Network     string `json:"network" binding:"required,oneof=xcb xab"`
 	Telegram    string `json:"telegram"`
-	Email       string `json:"email"`
+	Email       string `json:"email" binding:"omitempty,email"`
 }
 
 // RegisterResponse represents the success response for registration
@@ -36,6 +38,34 @@ func (s *HTTPServer) register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Validate address formats
+	if err := validation.ValidateAddress(req.Origin); err != nil {
+		s.logger.Debug("Invalid origin address", "error", err, "address", req.Origin)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid origin address: " + err.Error(),
+		})
+		return
+	}
+
+	if err := validation.ValidateAddress(req.Subscriber); err != nil {
+		s.logger.Debug("Invalid subscriber address", "error", err, "address", req.Subscriber)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid subscriber address: " + err.Error(),
+		})
+		return
+	}
+
+	if err := validation.ValidateAddress(req.Destination); err != nil {
+		s.logger.Debug("Invalid destination address", "error", err, "address", req.Destination)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid destination address: " + err.Error(),
 		})
 		return
 	}
@@ -103,11 +133,31 @@ func (s *HTTPServer) isSubscribed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "address is required"})
 		return
 	}
-	wallet, err := s.nuntiare.GetWallet(address)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get wallet"})
+
+	// Validate address format
+	if err := validation.ValidateAddress(address); err != nil {
+		s.logger.Debug("Invalid address", "error", err, "address", address)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address format: " + err.Error()})
 		return
 	}
+
+	wallet, err := s.nuntiare.GetWallet(address)
+	if err != nil {
+		// Check if it's a "not found" error
+		if strings.Contains(err.Error(), "record not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "wallet not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get wallet"})
+		}
+		return
+	}
+
+	// Wallet should never be nil here, but defensive check
+	if wallet == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "wallet not found"})
+		return
+	}
+
 	subscription, err := s.nuntiare.CheckWalletSubscription(wallet)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get subscription"})

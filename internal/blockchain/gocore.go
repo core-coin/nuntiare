@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/core-coin/go-core/v2"
 	"github.com/core-coin/go-core/v2/accounts/abi"
@@ -16,11 +18,19 @@ import (
 	"github.com/core-coin/nuntiare/pkg/logger"
 )
 
+const (
+	// BlockHeaderChannelBuffer is the buffer size for the block header channel
+	// Sized to handle ~1.5 minute of blocks assuming ~7s block time
+	BlockHeaderChannelBuffer = 15
+)
+
 type Gocore struct {
 	logger       *logger.Logger
 	config       *config.Config
 	apiURL       string
 	client       *xcbclient.Client
+
+	mu           sync.RWMutex
 	subscription core.Subscription
 
 	ctnContract *bind.BoundContract
@@ -46,7 +56,7 @@ func (g *Gocore) Run() error {
 func (g *Gocore) ConnectToRPC() error {
 	client, err := xcbclient.Dial(g.apiURL)
 	if err != nil {
-		return fmt.Errorf("failed to connect to the core RPC server: %s", err)
+		return fmt.Errorf("failed to connect to the core RPC server: %w", err)
 	}
 	g.client = client
 	return nil
@@ -70,11 +80,20 @@ func (g *Gocore) BuildBindings() error {
 }
 
 func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
-	channel := make(chan *types.Header, 300)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Unsubscribe from previous subscription if it exists to prevent resource leak
+	if g.subscription != nil {
+		g.subscription.Unsubscribe()
+		g.subscription = nil
+	}
+
+	channel := make(chan *types.Header, BlockHeaderChannelBuffer)
 
 	subscription, err := g.client.SubscribeNewHead(context.Background(), channel)
 	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to new head: %s", err)
+		return nil, fmt.Errorf("failed to subscribe to new head: %w", err)
 	}
 	g.subscription = subscription
 
@@ -82,8 +101,12 @@ func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
 }
 
 func (g *Gocore) Close() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.subscription != nil {
 		g.subscription.Unsubscribe()
+		g.subscription = nil
 	}
 	if g.client != nil {
 		g.client.Close()
@@ -93,9 +116,12 @@ func (g *Gocore) Close() error {
 }
 
 func (g *Gocore) GetBlockByNumber(number uint64) (*types.Block, error) {
-	block, err := g.client.BlockByNumber(context.Background(), big.NewInt(int64(number)))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	block, err := g.client.BlockByNumber(ctx, big.NewInt(int64(number)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to get block by number: %s", err)
+		return nil, fmt.Errorf("failed to get block by number: %w", err)
 	}
 
 	return block, nil
@@ -105,17 +131,20 @@ func (g *Gocore) GetAddressCTNBalance(wallet string) (*big.Int, error) {
 	results := []interface{}{}
 	err := g.ctnContract.Call(nil, &results, "balanceOf", wallet)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get balance: %s", err)
+		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
 	balance := results[0].(*big.Int)
 	return balance, nil
 }
 
 func (g *Gocore) GetTransactionReceipt(txHash string) (*types.Receipt, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	hash := common.HexToHash(txHash)
-	receipt, err := g.client.TransactionReceipt(context.Background(), hash)
+	receipt, err := g.client.TransactionReceipt(ctx, hash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get transaction receipt: %s", err)
+		return nil, fmt.Errorf("failed to get transaction receipt: %w", err)
 	}
 	return receipt, nil
 }

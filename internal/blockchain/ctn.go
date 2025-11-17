@@ -87,7 +87,7 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 	receiver := tx.To().Hex()
 	sender, err := signer.Sender(tx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sender: %s", err)
+		return nil, fmt.Errorf("failed to get sender: %w", err)
 	}
 	input := common.Bytes2Hex(tx.Data())
 	if receiver != tokenAddress {
@@ -131,9 +131,32 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 		if !ok {
 			return nil, fmt.Errorf("cannot convert batch transfer count to big.Int: %s", input[countStartOffset:countEndOffset])
 		}
-		for i := 0; i < int(count.Int64()); i++ {
-			to := input[offset+84+i*64 : offset+128+i*64]
-			value := input[offset+128+int(count.Int64())*64+i*64 : offset+192+int(count.Int64())*64+i*64]
+
+		// Validate count to prevent out-of-bounds access
+		countInt := int(count.Int64())
+		if countInt < 0 || countInt > 1000 {
+			return nil, fmt.Errorf("invalid batch transfer count: %d (must be between 0 and 1000)", countInt)
+		}
+
+		// Validate that we have enough data for all transfers
+		requiredLength := offset + 192 + countInt*64 + countInt*64
+		if len(input) < requiredLength {
+			return nil, fmt.Errorf("insufficient data for batch transfer: got %d, need %d for %d transfers", len(input), requiredLength, countInt)
+		}
+
+		for i := 0; i < countInt; i++ {
+			toStart := offset + 84 + i*64
+			toEnd := offset + 128 + i*64
+			valueStart := offset + 128 + countInt*64 + i*64
+			valueEnd := offset + 192 + countInt*64 + i*64
+
+			// Additional bounds check for safety
+			if toEnd > len(input) || valueEnd > len(input) {
+				return nil, fmt.Errorf("array index out of bounds in batch transfer at index %d", i)
+			}
+
+			to := input[toStart:toEnd]
+			value := input[valueStart:valueEnd]
 			amount, _ := big.NewFloat(0).Quo(new(big.Float).SetInt(big.NewInt(0).SetBytes(common.Hex2Bytes(value))), divisor).Float64()
 			transfers = append(transfers, &Transfer{
 				From:         sender.Hex(),

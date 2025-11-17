@@ -19,19 +19,17 @@ func NewNotificator(logger *logger.Logger, db models.Repository, telNotif *Teleg
 	return &Notificator{logger: logger, db: db, TelegramNotificator: telNotif, EmailNotificator: emailNotif}
 }
 
-// safeGo runs a function in a goroutine with panic recovery
-func (n *Notificator) safeGo(fn func(), context string) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				n.logger.Error("Goroutine panicked",
-					"context", context,
-					"panic", r,
-					"stack", string(debug.Stack()))
-			}
-		}()
-		fn()
+// safeCall runs a function with panic recovery (synchronous, no goroutine spawning)
+func (n *Notificator) safeCall(fn func(), context string) {
+	defer func() {
+		if r := recover(); r != nil {
+			n.logger.Error("Function panicked",
+				"context", context,
+				"panic", r,
+				"stack", string(debug.Stack()))
+		}
 	}()
+	fn()
 }
 
 func (n *Notificator) SendNotification(notification *models.Notification) {
@@ -44,15 +42,18 @@ func (n *Notificator) SendNotification(notification *models.Notification) {
 		n.logger.Error("Notification provider not found for wallet: ", notification.Wallet)
 		return
 	}
+
+	// Send notifications synchronously (we're already in a goroutine from nuntiare.safeGo)
+	// This prevents untracked goroutine spawning
 	if notificationProvider.TelegramProvider.ChatID != "" {
 		chatID := notificationProvider.TelegramProvider.ChatID
 		message := notification.String()
-		n.safeGo(func() { n.TelegramNotificator.SendNotification(chatID, message) }, "telegramNotification")
+		n.safeCall(func() { n.TelegramNotificator.SendNotification(chatID, message) }, "telegramNotification")
 	}
 	if notificationProvider.EmailProvider.Email != "" {
 		email := notificationProvider.EmailProvider.Email
 		message := notification.String()
-		n.safeGo(func() { n.EmailNotificator.SendNotification(email, message) }, "emailNotification")
+		n.safeCall(func() { n.EmailNotificator.SendNotification(email, message) }, "emailNotification")
 	}
 }
 

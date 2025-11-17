@@ -1,6 +1,7 @@
 package wellknown
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +51,11 @@ type WellKnownService struct {
 	// In-memory cache
 	tokenCache []*models.Token
 	cacheMutex sync.RWMutex
+
+	// Lifecycle management
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // NewWellKnownService creates a new WellKnownService instance
@@ -57,6 +63,7 @@ func NewWellKnownService(
 	logger *logger.Logger,
 	config *config.Config,
 ) *WellKnownService {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &WellKnownService{
 		logger:     logger,
 		config:     config,
@@ -66,6 +73,8 @@ func NewWellKnownService(
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -215,32 +224,58 @@ func (w *WellKnownService) GetAllTokens() []*models.Token {
 
 // StartPeriodicUpdate starts a goroutine that updates tokens periodically
 func (w *WellKnownService) StartPeriodicUpdate() {
-	// Initial fetch with retry logic
-	backoff := 5 * time.Second
-	maxBackoff := 5 * time.Minute
-
-	for {
-		if err := w.FetchAndUpdateTokens(); err != nil {
-			w.logger.Error("Failed to fetch tokens on startup, retrying...", "error", err, "retry_in", backoff)
-			time.Sleep(backoff)
-			backoff = backoff * 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
-		}
-		w.logger.Info("Successfully loaded initial token list")
-		break
-	}
-
-	// Update every hour
-	ticker := time.NewTicker(1 * time.Hour)
+	w.wg.Add(1)
 	go func() {
-		for range ticker.C {
-			w.logger.Info("Starting periodic token update")
+		defer w.wg.Done()
+
+		// Initial fetch with retry logic
+		backoff := 5 * time.Second
+		maxBackoff := 5 * time.Minute
+
+		for {
 			if err := w.FetchAndUpdateTokens(); err != nil {
-				w.logger.Error("Failed to fetch tokens during periodic update", "error", err)
+				w.logger.Error("Failed to fetch tokens on startup, retrying...", "error", err, "retry_in", backoff)
+
+				// Wait with context cancellation support
+				select {
+				case <-time.After(backoff):
+					backoff = backoff * 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+					continue
+				case <-w.ctx.Done():
+					w.logger.Info("WellKnown service stopped during initial fetch")
+					return
+				}
+			}
+			w.logger.Info("Successfully loaded initial token list")
+			break
+		}
+
+		// Update every hour
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				w.logger.Info("Starting periodic token update")
+				if err := w.FetchAndUpdateTokens(); err != nil {
+					w.logger.Error("Failed to fetch tokens during periodic update", "error", err)
+				}
+			case <-w.ctx.Done():
+				w.logger.Info("WellKnown service periodic update stopped")
+				return
 			}
 		}
 	}()
+}
+
+// Stop gracefully stops the WellKnownService
+func (w *WellKnownService) Stop() {
+	w.logger.Info("Stopping WellKnown service")
+	w.cancel()
+	w.wg.Wait()
+	w.logger.Info("WellKnown service stopped")
 }

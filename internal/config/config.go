@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/core-coin/go-core/v2/common"
 	"github.com/joho/godotenv"
@@ -21,9 +22,10 @@ type Config struct {
 	PostgresPort     int
 	PostgresDB       string
 	// Blockchain configuration
-	SmartContractAddress string
-	BlockchainServiceURL string
-	NetworkID            *big.Int
+	SmartContractAddress           string
+	SmartContractAddressNormalized string // Cached normalized address (lowercase, no 0x prefix)
+	BlockchainServiceURL           string
+	NetworkID                      *big.Int
 
 	// SMTP configuration
 	SMTPHost            string
@@ -93,12 +95,22 @@ func LoadConfig() (*Config, error) {
 	// Set default network ID before validation (required for address validation)
 	common.DefaultNetworkID = common.NetworkID(cfg.NetworkID.Int64())
 
+	// Normalize addresses for efficient comparison
+	cfg.SmartContractAddressNormalized = normalizeAddress(cfg.SmartContractAddress)
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// normalizeAddress converts an address to lowercase without 0x prefix for efficient comparison
+func normalizeAddress(addr string) string {
+	addr = strings.TrimPrefix(addr, "0x")
+	addr = strings.TrimPrefix(addr, "0X")
+	return strings.ToLower(addr)
 }
 
 // Validate checks that all required configuration fields are properly set
@@ -126,6 +138,15 @@ func (c *Config) Validate() error {
 
 	if c.PostgresHost == "" {
 		return fmt.Errorf("POSTGRES_HOST is required")
+	}
+
+	// Validate subscription configuration to prevent division by zero
+	if c.SubscriptionMonthCost <= 0 {
+		return fmt.Errorf("SUBSCRIPTION_MONTH_COST must be greater than 0, got %f", c.SubscriptionMonthCost)
+	}
+
+	if c.SubscriptionMonthDuration <= 0 {
+		return fmt.Errorf("SUBSCRIPTION_MONTH_DURATION must be greater than 0, got %f", c.SubscriptionMonthDuration)
 	}
 
 	return nil

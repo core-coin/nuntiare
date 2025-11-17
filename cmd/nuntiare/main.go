@@ -176,9 +176,25 @@ func run(c *cli.Context) error {
 	// Graceful shutdown
 	log.Info("Shutting down gracefully...")
 
+	// Stop the HTTP server first (stop accepting new requests)
+	if err := apiServer.Shutdown(); err != nil {
+		log.Error("Error shutting down HTTP server", "error", err)
+	}
+
+	// Stop the WellKnown service (stop periodic token updates)
+	wellKnownService.Stop()
+
+	// Stop the Nuntiare instance (this will cancel context and wait for goroutines)
+	nuntiareApp.Stop()
+
 	// Close blockchain service connection
 	if err := blockchainService.Close(); err != nil {
 		log.Error("Error closing blockchain service", "error", err)
+	}
+
+	// Close database connection
+	if err := db.Close(); err != nil {
+		log.Error("Error closing database connection", "error", err)
 	}
 
 	log.Info("Shutdown complete")
