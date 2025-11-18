@@ -79,7 +79,7 @@ func (g *Gocore) BuildBindings() error {
 	return nil
 }
 
-func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
+func (g *Gocore) NewHeaderSubscription() (core.Subscription, <-chan *types.Header, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -93,11 +93,11 @@ func (g *Gocore) NewHeaderSubscription() (<-chan *types.Header, error) {
 
 	subscription, err := g.client.SubscribeNewHead(context.Background(), channel)
 	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to new head: %w", err)
+		return nil, nil, fmt.Errorf("failed to subscribe to new head: %w", err)
 	}
 	g.subscription = subscription
 
-	return channel, nil
+	return subscription, channel, nil
 }
 
 func (g *Gocore) Close() error {

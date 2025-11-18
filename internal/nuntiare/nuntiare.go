@@ -276,7 +276,7 @@ func (n *Nuntiare) WatchTransfers() {
 
 	// Now start watching for transfers
 	for {
-		channel, err := n.gocore.NewHeaderSubscription()
+		subscription, channel, err := n.gocore.NewHeaderSubscription()
 		if err != nil {
 			n.logger.Error("Failed to subscribe to new head, will retry", "error", err, "retry_in", backoff)
 			time.Sleep(backoff)
@@ -297,6 +297,8 @@ func (n *Nuntiare) WatchTransfers() {
 
 		// Process headers with proper cleanup
 		func() {
+			defer subscription.Unsubscribe()
+
 			for {
 				select {
 				case header, ok := <-channel:
@@ -318,6 +320,11 @@ func (n *Nuntiare) WatchTransfers() {
 						}
 						n.checkBlock(block)
 					}
+
+				case err := <-subscription.Err():
+					// Subscription error (connection dropped, etc.)
+					n.logger.Error("Blockchain subscription error, will restart", "error", err)
+					return
 
 				case <-n.ctx.Done():
 					// Context cancelled, clean up and exit
