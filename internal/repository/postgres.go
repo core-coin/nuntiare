@@ -139,7 +139,20 @@ func (db *PostgresDB) RemoveOldSubscriptionPayments(timestamp int64) error {
 }
 
 func (db *PostgresDB) RemoveUnpaidSubscriptions(timestamp int64) error {
-	if err := db.Conn.Where("created_at < ? AND paid = ?", timestamp, false).Delete(&models.Wallet{}).Error; err != nil {
+	// Only delete wallets that:
+	// 1. Were created before the grace period
+	// 2. Currently have paid = false
+	// 3. NEVER had any subscription payment (no entries in subscription_payments table)
+	// This ensures wallets that were once subscribed are kept forever and can be renewed
+
+	if err := db.Conn.Where(`
+		created_at < ?
+		AND paid = ?
+		AND address NOT IN (
+			SELECT DISTINCT address
+			FROM subscription_payments
+		)
+	`, timestamp, false).Delete(&models.Wallet{}).Error; err != nil {
 		return fmt.Errorf("failed to remove unpaid subscriptions: %w", err)
 	}
 
@@ -190,6 +203,36 @@ func (db *PostgresDB) GetWalletsNotificationProvider(address string) (*models.No
 	}
 
 	return &notificationProvider, nil
+}
+
+func (db *PostgresDB) UpdateNotificationProvider(address, telegram, email string) error {
+	// Get the notification provider
+	var notificationProvider models.NotificationProvider
+	if err := db.Conn.Preload("TelegramProvider").Preload("EmailProvider").Where("address = ?", address).First(&notificationProvider).Error; err != nil {
+		return fmt.Errorf("failed to get notification provider: %w", err)
+	}
+
+	// Update telegram provider if provided
+	if telegram != "" {
+		if err := db.Conn.Model(&models.TelegramProvider{}).
+			Where("notification_provider_id = ?", notificationProvider.ID).
+			Update("username", telegram).Error; err != nil {
+			return fmt.Errorf("failed to update telegram provider: %w", err)
+		}
+		db.logger.Debug("Updated telegram username", "address", address, "telegram", telegram)
+	}
+
+	// Update email provider if provided
+	if email != "" {
+		if err := db.Conn.Model(&models.EmailProvider{}).
+			Where("notification_provider_id = ?", notificationProvider.ID).
+			Update("email", email).Error; err != nil {
+			return fmt.Errorf("failed to update email provider: %w", err)
+		}
+		db.logger.Debug("Updated email", "address", address, "email", email)
+	}
+
+	return nil
 }
 
 func (db *PostgresDB) AddTelegramProviderChatID(username, chatID string) error {

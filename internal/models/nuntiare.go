@@ -11,6 +11,8 @@ type NuntiareI interface {
 	RegisterNewWallet(*Wallet) error
 	// GetWallet returns a wallet from the repository
 	GetWallet(address string) (*Wallet, error)
+	// UpdateNotificationProvider updates notification providers for an existing wallet
+	UpdateNotificationProvider(address, telegram, email string) error
 
 	// NewHeaderSubscription creates a new header subscription
 	WatchTransfers()

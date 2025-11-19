@@ -61,20 +61,43 @@ func (s *HTTPServer) register(c *gin.Context) {
 		return
 	}
 
-	// Check if wallet already exists
-	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
-	if err == nil && existingWallet != nil {
-		s.logger.Debug("Wallet already registered", "destination", req.Destination)
-		c.JSON(http.StatusConflict, gin.H{
-			"success":              false,
-			"error":                "Wallet already registered",
-			"address":              req.Destination,
-			"subscription_address": existingWallet.SubscriptionAddress,
+	// Require at least one notification method
+	if req.Telegram == "" && req.Email == "" {
+		s.logger.Debug("No notification method provided", "destination", req.Destination)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "At least one notification method (telegram or email) is required",
 		})
 		return
 	}
 
-	// Create notification provider
+	// Check if wallet already exists
+	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
+	if err == nil && existingWallet != nil {
+		// Wallet exists - update notification providers
+		s.logger.Info("Wallet already exists, updating notification providers", "destination", req.Destination)
+
+		err = s.nuntiare.UpdateNotificationProvider(req.Destination, req.Telegram, req.Email)
+		if err != nil {
+			s.logger.Error("Failed to update notification provider", "error", err, "destination", req.Destination)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Failed to update notification provider",
+			})
+			return
+		}
+
+		s.logger.Info("Notification providers updated successfully", "destination", req.Destination)
+		c.JSON(http.StatusOK, RegisterResponse{
+			Success:             true,
+			Message:             "Notification providers updated successfully",
+			Address:             req.Destination,
+			SubscriptionAddress: existingWallet.SubscriptionAddress,
+		})
+		return
+	}
+
+	// Create notification provider for new wallet
 	notificationProvider := models.NotificationProvider{
 		TelegramProvider: models.TelegramProvider{
 			Username: req.Telegram,
@@ -85,7 +108,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 		Address: req.Destination,
 	}
 
-	// Register wallet
+	// Register new wallet
 	err = s.nuntiare.RegisterNewWallet(&models.Wallet{
 		Address:              req.Destination,
 		SubscriptionAddress:  req.Subscriber,

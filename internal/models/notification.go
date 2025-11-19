@@ -18,8 +18,8 @@ type TelegramProvider struct {
 	NotificationProviderID int64 `json:"notification_provider_id" gorm:"column:notification_provider_id"`
 	// Username is the username in the telegram.
 	Username string `json:"username" gorm:"column:username;not null"`
-	// ChatID is the chat ID in the telegram.
-	ChatID string `json:"chat_id" gorm:"column:chat_id;not null"`
+	// ChatID is the chat ID in the telegram. Empty until user sends /start command.
+	ChatID string `json:"chat_id" gorm:"column:chat_id"`
 }
 
 type EmailProvider struct {
@@ -27,6 +27,6 @@ type EmailProvider struct {
 	ID int64 `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
 	// NotificationProviderID is the foreign key to the NotificationProvider.
 	NotificationProviderID int64 `json:"notification_provider_id" gorm:"column:notification_provider_id"`
-	// Email is the email address of the user.
-	Email string `json:"email" gorm:"column:email;not null"`
+	// Email is the email address of the user. Optional.
+	Email string `json:"email" gorm:"column:email"`
 }

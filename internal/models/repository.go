@@ -16,6 +16,7 @@ type Repository interface {
 	RemoveUnpaidSubscriptions(timestamp int64) error
 
 	GetWalletsNotificationProvider(address string) (*NotificationProvider, error)
+	UpdateNotificationProvider(address, telegram, email string) error
 
 	AddTelegramProviderChatID(username, chatID string) error
 	GetNotificationProvidersByTelegramUsername(username string) ([]*NotificationProvider, error)

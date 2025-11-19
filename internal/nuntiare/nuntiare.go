@@ -238,6 +238,11 @@ func (n *Nuntiare) RegisterNewWallet(wallet *models.Wallet) error {
 	return n.repo.AddNewWallet(wallet)
 }
 
+// UpdateNotificationProvider updates notification providers for an existing wallet
+func (n *Nuntiare) UpdateNotificationProvider(address, telegram, email string) error {
+	return n.repo.UpdateNotificationProvider(address, telegram, email)
+}
+
 // IsRegistered checks if the given address is registered
 func (n *Nuntiare) IsRegistered(address string) (bool, error) {
 	return n.repo.CheckWalletExists(address)
