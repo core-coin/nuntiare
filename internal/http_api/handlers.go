@@ -71,7 +71,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 		return
 	}
 
-	// Check if wallet already exists
+	/*
 	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
 	if err == nil && existingWallet != nil {
 		// Wallet exists - update notification providers
@@ -91,6 +91,22 @@ func (s *HTTPServer) register(c *gin.Context) {
 		c.JSON(http.StatusOK, RegisterResponse{
 			Success:             true,
 			Message:             "Notification providers updated successfully",
+			Address:             req.Destination,
+			SubscriptionAddress: existingWallet.SubscriptionAddress,
+		})
+		return
+	}
+	*/
+	
+	// Check if wallet already exists
+	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
+	if err == nil && existingWallet != nil {
+		// Wallet exists - return conflict error
+		s.logger.Info("Wallet already exists", "destination", req.Destination)
+
+		c.JSON(http.StatusConflict, RegisterResponse{
+			Success:             false,
+			Message:             "Wallet already exists",
 			Address:             req.Destination,
 			SubscriptionAddress: existingWallet.SubscriptionAddress,
 		})
