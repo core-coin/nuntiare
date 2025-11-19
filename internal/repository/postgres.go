@@ -144,11 +144,14 @@ func (db *PostgresDB) RemoveUnpaidSubscriptions(timestamp int64) error {
 	// 2. Currently have paid = false
 	// 3. NEVER had any subscription payment (no entries in subscription_payments table)
 	// This ensures wallets that were once subscribed are kept forever and can be renewed
+	//
+	// Note: subscription_payments.address stores the subscription_address, not wallet address
+	// So we need to check wallet.subscription_address against subscription_payments.address
 
 	if err := db.Conn.Where(`
 		created_at < ?
 		AND paid = ?
-		AND address NOT IN (
+		AND subscription_address NOT IN (
 			SELECT DISTINCT address
 			FROM subscription_payments
 		)
