@@ -521,36 +521,48 @@ func (n *Nuntiare) processUserNotification(transfer *blockchain.Transfer) {
 	n.safeGo(func() { n.notificator.SendNotification(notification) }, "sendNotification")
 }
 
-// processSubscriptionPayment handles CTN payments to subscription addresses
+// processSubscriptionPayment handles CTN payments to the shared RECEIVING_ADDRESS
+// All subscription payments go TO RECEIVING_ADDRESS FROM subscriber addresses
 func (n *Nuntiare) processSubscriptionPayment(transfer *blockchain.Transfer) {
 	// Only CTN token can be used for subscriptions
 	if transfer.TokenAddress != n.config.SmartContractAddress {
 		return
 	}
 
-	n.logger.Debug("Checking if address is subscription address", "address", transfer.To, "amount", transfer.Amount)
+	// Normalize addresses for comparison (lowercase, no 0x prefix)
+	transferToNormalized := strings.ToLower(strings.TrimPrefix(transfer.To, "0x"))
+	receivingAddrNormalized := n.config.ReceivingAddressNormalized
 
-	isSubscriptionAddr, err := n.repo.IsSubscriptionAddress(transfer.To)
+	// Check if payment is TO the shared RECEIVING_ADDRESS
+	if transferToNormalized != receivingAddrNormalized {
+		return
+	}
+
+	n.logger.Debug("Payment to RECEIVING_ADDRESS detected, checking sender",
+		"from", transfer.From,
+		"to", transfer.To,
+		"amount", transfer.Amount)
+
+	// Look up wallet by subscriber address (the FROM address)
+	// GetWalletBySubscriptionAddress looks up by subscription_address field
+	wallet, err := n.repo.GetWalletBySubscriptionAddress(transfer.From)
 	if err != nil {
-		n.logger.Error("Failed to check subscription address", "error", err, "address", transfer.To)
+		n.logger.Debug("No registered wallet found for subscriber address",
+			"subscriber", transfer.From,
+			"error", err)
 		return
 	}
 
-	if !isSubscriptionAddr {
-		n.logger.Debug("Address is not a subscription address", "address", transfer.To)
-		return
-	}
-
-	n.logger.Debug("Subscription payment detected", "address", transfer.To, "amount", transfer.Amount)
-
-	wallet, err := n.repo.GetWalletBySubscriptionAddress(transfer.To)
-	if err != nil {
-		n.logger.Error("Failed to get wallet by subscription address", "error", err, "address", transfer.To)
-		return
-	}
+	n.logger.Info("Subscription payment detected",
+		"subscriber", transfer.From,
+		"destination_wallet", wallet.Address,
+		"amount", transfer.Amount)
 
 	if err := n.AddSubscriptionPaymentAndUpdatePaidStatus(wallet, transfer.Amount, time.Now().Unix()); err != nil {
-		n.logger.Error("Failed to process subscription payment", "error", err, "wallet", wallet.Address)
+		n.logger.Error("Failed to process subscription payment",
+			"error", err,
+			"wallet", wallet.Address,
+			"subscriber", transfer.From)
 	}
 }
 

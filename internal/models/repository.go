@@ -5,7 +5,6 @@ type Repository interface {
 	CheckWalletExists(address string) (bool, error)
 	GetWallet(address string) (*Wallet, error)
 	GetWalletBySubscriptionAddress(subscriptionAddress string) (*Wallet, error)
-	IsSubscriptionAddress(address string) (bool, error)
 	UpdateWalletPaidStatus(address string, paid bool) error
 	UpdateWalletSubscriptionExpiration(address string, expiresAt int64) error
 

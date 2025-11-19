@@ -24,6 +24,8 @@ type Config struct {
 	// Blockchain configuration
 	SmartContractAddress           string
 	SmartContractAddressNormalized string // Cached normalized address (lowercase, no 0x prefix)
+	ReceivingAddress               string  // Single address that receives all subscription payments
+	ReceivingAddressNormalized     string  // Cached normalized receiving address
 	BlockchainServiceURL           string
 	NetworkID                      *big.Int
 
@@ -73,6 +75,7 @@ func LoadConfig() (*Config, error) {
 		PostgresPort:         getEnvAsInt("POSTGRES_PORT", 5432),
 		PostgresDB:           getEnv("POSTGRES_DB", "nuntiare"),
 		SmartContractAddress: getEnv("SMART_CONTRACT_ADDRESS", ""),
+		ReceivingAddress:     getEnv("RECEIVING_ADDRESS", ""),
 		BlockchainServiceURL: getEnv("BLOCKCHAIN_SERVICE_URL", "http://localhost:8545"),
 		NetworkID:            getEnvAsBigInt("NETWORK_ID", big.NewInt(1)), // Default to Mainnet ID
 		TelegramBotToken:     getEnv("TELEGRAM_BOT_TOKEN", ""),
@@ -97,6 +100,7 @@ func LoadConfig() (*Config, error) {
 
 	// Normalize addresses for efficient comparison
 	cfg.SmartContractAddressNormalized = normalizeAddress(cfg.SmartContractAddress)
+	cfg.ReceivingAddressNormalized = normalizeAddress(cfg.ReceivingAddress)
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
@@ -122,6 +126,15 @@ func (c *Config) Validate() error {
 	// Validate smart contract address format
 	if _, err := common.HexToAddress(c.SmartContractAddress); err != nil {
 		return fmt.Errorf("invalid SMART_CONTRACT_ADDRESS format: %w", err)
+	}
+
+	if c.ReceivingAddress == "" {
+		return fmt.Errorf("RECEIVING_ADDRESS is required")
+	}
+
+	// Validate receiving address format
+	if _, err := common.HexToAddress(c.ReceivingAddress); err != nil {
+		return fmt.Errorf("invalid RECEIVING_ADDRESS format: %w", err)
 	}
 
 	if c.BlockchainServiceURL == "" {

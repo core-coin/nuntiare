@@ -4,10 +4,12 @@ package models
 type Wallet struct {
 	// Originator is the company name who is issuing it
 	Originator string `json:"originator" gorm:"column:originator"`
-	// Address is the address of the wallet.
+	// Address is the destination wallet address that receives notifications.
 	Address string `json:"address" gorm:"column:address;primaryKey"`
-	// SubscriptionAddress is the address which we use to check if user has subscription.
-	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address;index"`
+	// SubscriptionAddress is the subscriber/payer address that sends payment to RECEIVING_ADDRESS.
+	// We watch for payments FROM this address TO the shared RECEIVING_ADDRESS (from config).
+	// This identifies which wallet's subscription is being paid.
+	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address;index;unique"`
 	// Network is the network the wallet is on. (xcb, btc etc.)
 	Network string `json:"network" gorm:"column:network"`
 	// CreatedAt is the date when the wallet was created.
@@ -25,8 +27,9 @@ type Wallet struct {
 type SubscriptionPayment struct {
 	// ID is the unique identifier for the payment.
 	ID int64 `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
-	// Address is the address of the wallet.
-	Address string `json:"address" gorm:"column:address"`
+	// Address is the subscriber/payer address that sent the payment.
+	// This matches Wallet.SubscriptionAddress to identify which wallet paid.
+	Address string `json:"address" gorm:"column:address;index"`
 	// Amount is the amount of CTN paid for the subscription.
 	Amount float64 `json:"amount" gorm:"column:amount"`
 	// Timestamp is the date when the payment was made.

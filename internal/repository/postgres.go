@@ -118,18 +118,6 @@ func (db *PostgresDB) GetSubscriptionPayments(subscriptionAddress string) ([]*mo
 	return payments, nil
 }
 
-func (db *PostgresDB) IsSubscriptionAddress(subscriptionAddress string) (bool, error) {
-	var wallet models.Wallet
-	if err := db.Conn.Where("subscription_address = ?", subscriptionAddress).First(&wallet).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check if wallet is subscription address: %w", err)
-	}
-
-	return true, nil
-}
-
 func (db *PostgresDB) RemoveOldSubscriptionPayments(timestamp int64) error {
 	if err := db.Conn.Where("timestamp < ?", timestamp).Delete(&models.SubscriptionPayment{}).Error; err != nil {
 		return fmt.Errorf("failed to remove old subscription payments: %w", err)
