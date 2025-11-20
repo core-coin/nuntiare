@@ -226,6 +226,36 @@ func (db *PostgresDB) UpdateNotificationProvider(address, telegram, email string
 	return nil
 }
 
+func (db *PostgresDB) UpdateWalletMetadata(address, os, lang string) error {
+	updates := make(map[string]interface{})
+	if os != "" {
+		updates["os"] = os
+	}
+	if lang != "" {
+		updates["lang"] = lang
+	}
+
+	if len(updates) == 0 {
+		return nil // Nothing to update
+	}
+
+	if err := db.Conn.Model(&models.Wallet{}).Where("address = ?", address).Updates(updates).Error; err != nil {
+		return fmt.Errorf("failed to update wallet metadata: %w", err)
+	}
+
+	db.logger.Debug("Updated wallet metadata", "address", address, "os", os, "lang", lang)
+	return nil
+}
+
+func (db *PostgresDB) SetWalletActive(address string, active bool) error {
+	if err := db.Conn.Model(&models.Wallet{}).Where("address = ?", address).Update("active", active).Error; err != nil {
+		return fmt.Errorf("failed to set wallet active status: %w", err)
+	}
+
+	db.logger.Debug("Updated wallet active status", "address", address, "active", active)
+	return nil
+}
+
 func (db *PostgresDB) AddTelegramProviderChatID(username, chatID string) error {
 	if err := db.Conn.Model(&models.TelegramProvider{}).Where("username = ?", username).Update("chat_id", chatID).Error; err != nil {
 		return fmt.Errorf("failed to add telegram provider chat ID: %w", err)

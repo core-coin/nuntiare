@@ -157,6 +157,12 @@ func (n *Nuntiare) shouldNotifyWallet(address string) (*models.Wallet, bool, err
 		return nil, false, fmt.Errorf("failed to get wallet: %w", err)
 	}
 
+	// Check if wallet is active (not cancelled)
+	if !wallet.Active {
+		n.logger.Debug("Wallet notifications are cancelled", "address", address)
+		return wallet, false, nil
+	}
+
 	// Optimization: Skip subscription check for whitelisted wallets (saves DB query)
 	if wallet.Whitelisted {
 		return wallet, true, nil
@@ -241,6 +247,26 @@ func (n *Nuntiare) RegisterNewWallet(wallet *models.Wallet) error {
 // UpdateNotificationProvider updates notification providers for an existing wallet
 func (n *Nuntiare) UpdateNotificationProvider(address, telegram, email string) error {
 	return n.repo.UpdateNotificationProvider(address, telegram, email)
+}
+
+// UpdateNotificationProviderAndReactivate updates notification providers and reactivates wallet
+func (n *Nuntiare) UpdateNotificationProviderAndReactivate(address, telegram, email string) error {
+	// Update notification providers
+	if err := n.repo.UpdateNotificationProvider(address, telegram, email); err != nil {
+		return err
+	}
+
+	// Reactivate wallet (in case it was cancelled)
+	if err := n.repo.SetWalletActive(address, true); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// CancelWallet deactivates notifications while keeping subscription active
+func (n *Nuntiare) CancelWallet(address string) error {
+	return n.repo.SetWalletActive(address, false)
 }
 
 // IsRegistered checks if the given address is registered

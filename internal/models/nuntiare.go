@@ -13,6 +13,10 @@ type NuntiareI interface {
 	GetWallet(address string) (*Wallet, error)
 	// UpdateNotificationProvider updates notification providers for an existing wallet
 	UpdateNotificationProvider(address, telegram, email string) error
+	// UpdateNotificationProviderAndReactivate updates notification providers and sets Active=true
+	UpdateNotificationProviderAndReactivate(address, telegram, email string) error
+	// CancelWallet deactivates notifications while keeping subscription active
+	CancelWallet(address string) error
 
 	// NewHeaderSubscription creates a new header subscription
 	WatchTransfers()

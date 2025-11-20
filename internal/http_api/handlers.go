@@ -13,9 +13,12 @@ import (
 // RegisterRequest represents the JSON body for wallet registration
 type RegisterRequest struct {
 	Origin      string `json:"origin" binding:"required"`
+	OriginID    string `json:"origin_id" binding:"required,min=34,max=34"` // Alphanumeric UUID, 34 chars
 	Subscriber  string `json:"subscriber" binding:"required"`
 	Destination string `json:"destination" binding:"required"`
 	Network     string `json:"network" binding:"required,oneof=xcb xab"`
+	OS          string `json:"os"`   // Operating system (ios, android, web, etc.)
+	Lang        string `json:"lang"` // Language (en, es, fr, etc.)
 	Telegram    string `json:"telegram"`
 	Email       string `json:"email" binding:"omitempty,email"`
 }
@@ -26,6 +29,19 @@ type RegisterResponse struct {
 	Message             string `json:"message"`
 	Address             string `json:"address"`
 	SubscriptionAddress string `json:"subscription_address"`
+}
+
+// CancelRequest represents the JSON body for canceling notifications
+type CancelRequest struct {
+	Destination string `json:"destination" binding:"required"`
+	OriginID    string `json:"origin_id" binding:"required"`
+}
+
+// SubscriptionResponse represents the subscription status with expiration
+type SubscriptionResponse struct {
+	Subscribed bool  `json:"subscribed"`
+	ExpiresAt  int64 `json:"expires_at,omitempty"` // Unix timestamp, only if subscribed
+	Active     bool  `json:"active"`                // Whether notifications are enabled
 }
 
 // register is a handler for the /register endpoint.
@@ -71,13 +87,22 @@ func (s *HTTPServer) register(c *gin.Context) {
 		return
 	}
 
-	/*
 	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
 	if err == nil && existingWallet != nil {
-		// Wallet exists - update notification providers
-		s.logger.Info("Wallet already exists, updating notification providers", "destination", req.Destination)
+		// Wallet exists - verify OriginID for authentication
+		if existingWallet.OriginID != req.OriginID {
+			s.logger.Warn("OriginID mismatch for wallet update", "destination", req.Destination)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Invalid origin_id",
+			})
+			return
+		}
 
-		err = s.nuntiare.UpdateNotificationProvider(req.Destination, req.Telegram, req.Email)
+		// Update notification providers and re-activate if cancelled
+		s.logger.Info("Wallet already exists, updating notification providers and reactivating", "destination", req.Destination)
+
+		err = s.nuntiare.UpdateNotificationProviderAndReactivate(req.Destination, req.Telegram, req.Email)
 		if err != nil {
 			s.logger.Error("Failed to update notification provider", "error", err, "destination", req.Destination)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -87,7 +112,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 			return
 		}
 
-		s.logger.Info("Notification providers updated successfully", "destination", req.Destination)
+		s.logger.Info("Notification providers updated and wallet reactivated", "destination", req.Destination)
 		c.JSON(http.StatusOK, RegisterResponse{
 			Success:             true,
 			Message:             "Notification providers updated successfully",
@@ -96,22 +121,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 		})
 		return
 	}
-	*/
-	
-	// Check if wallet already exists
-	existingWallet, err := s.nuntiare.GetWallet(req.Destination)
-	if err == nil && existingWallet != nil {
-		// Wallet exists - return conflict error
-		s.logger.Info("Wallet already exists", "destination", req.Destination)
 
-		c.JSON(http.StatusConflict, RegisterResponse{
-			Success:             false,
-			Message:             "Wallet already exists",
-			Address:             req.Destination,
-			SubscriptionAddress: existingWallet.SubscriptionAddress,
-		})
-		return
-	}
 
 	// Create notification provider for new wallet
 	notificationProvider := models.NotificationProvider{
@@ -128,10 +138,14 @@ func (s *HTTPServer) register(c *gin.Context) {
 	err = s.nuntiare.RegisterNewWallet(&models.Wallet{
 		Address:              req.Destination,
 		SubscriptionAddress:  req.Subscriber,
+		OriginID:             req.OriginID,
 		Originator:           req.Origin,
 		Whitelisted:          false,
 		Network:              req.Network,
+		OS:                   req.OS,
+		Lang:                 req.Lang,
 		CreatedAt:            time.Now().Unix(),
+		Active:               true,
 		Paid:                 false,
 		NotificationProvider: notificationProvider,
 	})
@@ -188,12 +202,23 @@ func (s *HTTPServer) isSubscribed(c *gin.Context) {
 		return
 	}
 
-	subscription, err := s.nuntiare.CheckWalletSubscription(wallet)
+	subscribed, err := s.nuntiare.CheckWalletSubscription(wallet)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get subscription"})
 		return
 	}
-	c.JSON(http.StatusOK, subscription)
+
+	response := SubscriptionResponse{
+		Subscribed: subscribed,
+		Active:     wallet.Active,
+	}
+
+	// Include expiration timestamp only if subscribed
+	if subscribed {
+		response.ExpiresAt = wallet.SubscriptionExpiresAt
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // handleTelegramWebhook processes incoming Telegram webhook updates
@@ -213,4 +238,73 @@ func (s *HTTPServer) handleTelegramWebhook(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// cancel is a handler for the /cancel endpoint.
+// It deactivates notifications while keeping the subscription active.
+func (s *HTTPServer) cancel(c *gin.Context) {
+	var req CancelRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.logger.Debug("Invalid request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Validate address format
+	if err := validation.ValidateAddress(req.Destination); err != nil {
+		s.logger.Debug("Invalid destination address", "error", err, "address", req.Destination)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid destination address: " + err.Error(),
+		})
+		return
+	}
+
+	// Get wallet
+	wallet, err := s.nuntiare.GetWallet(req.Destination)
+	if err != nil {
+		if strings.Contains(err.Error(), "record not found") {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Wallet not found",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Failed to get wallet",
+			})
+		}
+		return
+	}
+
+	// Verify OriginID
+	if wallet.OriginID != req.OriginID {
+		s.logger.Warn("OriginID mismatch for wallet cancel", "destination", req.Destination)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   "Invalid origin_id",
+		})
+		return
+	}
+
+	// Cancel (deactivate) wallet
+	err = s.nuntiare.CancelWallet(req.Destination)
+	if err != nil {
+		s.logger.Error("Failed to cancel wallet", "error", err, "destination", req.Destination)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to cancel notifications",
+		})
+		return
+	}
+
+	s.logger.Info("Wallet notifications cancelled", "destination", req.Destination)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Notifications cancelled successfully. Subscription remains active.",
+	})
 }

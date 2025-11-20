@@ -10,10 +10,19 @@ type Wallet struct {
 	// We watch for payments FROM this address TO the shared RECEIVING_ADDRESS (from config).
 	// This identifies which wallet's subscription is being paid.
 	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address;index;unique"`
+	// OriginID is a unique identifier for authentication of update/cancel operations.
+	// Format: alphanumeric string, 34 characters (from crypto.randomUUID())
+	OriginID string `json:"origin_id" gorm:"column:origin_id;index;not null"`
 	// Network is the network the wallet is on. (xcb, btc etc.)
 	Network string `json:"network" gorm:"column:network"`
+	// OS is the operating system of the user (ios, android, web, etc.)
+	OS string `json:"os" gorm:"column:os"`
+	// Lang is the language preference of the user (en, es, fr, etc.)
+	Lang string `json:"lang" gorm:"column:lang"`
 	// CreatedAt is the date when the wallet was created.
 	CreatedAt int64 `json:"created_at" gorm:"column:created_at;index"`
+	// Active indicates if notifications are enabled. User can cancel notifications while keeping subscription.
+	Active bool `json:"active" gorm:"column:active;default:true"`
 	// Whitelisted is a flag indicating if the wallet is whitelisted.
 	Whitelisted bool `json:"whitelisted" gorm:"column:whitelisted"`
 	// Paid is a flag indicating if the wallet has paid for the subscription.
