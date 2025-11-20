@@ -449,7 +449,7 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 
 		// Check for CTN transfers (for subscription payments)
 		if isCTNContract {
-			ctnTransfers, err := blockchain.CheckForCTNTransfer(tx, n.config.SmartContractAddress)
+			ctnTransfers, err := blockchain.CheckForCTNTransfer(tx, n.config.SmartContractAddress, n.config.NetworkID.Int64())
 			if err != nil {
 				n.logger.Error("Failed to check for CTN transfer", "error", err)
 			} else if len(ctnTransfers) > 0 {
@@ -467,7 +467,7 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 				var err error
 
 				if token.Type == "CBC20" {
-					transfers, err = blockchain.CheckForCBC20Transfer(tx, token.Address, token.Symbol, token.Decimals)
+					transfers, err = blockchain.CheckForCBC20Transfer(tx, token.Address, token.Symbol, token.Decimals, n.config.NetworkID.Int64())
 				} else if token.Type == "CBC721" {
 					n.logger.Debug("Fetching receipt for CBC721 transfer", "tx", tx.Hash().String())
 					// CBC721 transfers emit events, so we need to fetch the receipt
@@ -476,7 +476,7 @@ func (n *Nuntiare) checkBlock(block *types.Block) {
 						n.logger.Error("Failed to get transaction receipt", "tx", tx.Hash().String(), "error", receiptErr)
 					} else {
 						n.logger.Debug("Receipt fetched, parsing events", "tx", tx.Hash().String(), "logs", len(receipt.Logs))
-						transfers, err = blockchain.CheckForCBC721TransferFromReceipt(receipt, token.Address, token.Symbol)
+						transfers, err = blockchain.CheckForCBC721TransferFromReceipt(receipt, token.Address, token.Symbol, tx.Hash().String(), n.config.NetworkID.Int64())
 						n.logger.Debug("CBC721 parsing complete", "tx", tx.Hash().String(), "transfers", len(transfers))
 					}
 				}
@@ -537,11 +537,14 @@ func (n *Nuntiare) processUserNotification(transfer *blockchain.Transfer) {
 
 	notification := &models.Notification{
 		Wallet:       transfer.To,
+		From:         transfer.From,
 		Amount:       transfer.Amount,
 		Currency:     transfer.TokenSymbol,
 		TokenAddress: transfer.TokenAddress,
 		TokenType:    transfer.TokenType,
 		TokenID:      transfer.TokenID,
+		TxHash:       transfer.TxHash,
+		NetworkID:    transfer.NetworkID,
 	}
 
 	n.safeGo(func() { n.notificator.SendNotification(notification) }, "sendNotification")
@@ -608,10 +611,21 @@ func (n *Nuntiare) processXCBTransfer(tx *types.Transaction) {
 	amount := weiToXCB(tx.Value())
 	n.logger.Info("Sending notification", "wallet", wallet.Address, "currency", "XCB", "amount", amount, "tx", tx.Hash().String())
 
+	// Get sender address
+	signer := types.NewNucleusSigner(n.config.NetworkID)
+	sender, err := signer.Sender(tx)
+	fromAddr := ""
+	if err == nil {
+		fromAddr = sender.Hex()
+	}
+
 	notification := &models.Notification{
-		Wallet:   address,
-		Amount:   amount,
-		Currency: "XCB",
+		Wallet:    address,
+		From:      fromAddr,
+		Amount:    amount,
+		Currency:  "XCB",
+		TxHash:    tx.Hash().String(),
+		NetworkID: n.config.NetworkID.Int64(),
 	}
 
 	n.safeGo(func() { n.notificator.SendNotification(notification) }, "sendNotification")

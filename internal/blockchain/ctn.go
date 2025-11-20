@@ -72,16 +72,19 @@ type Transfer struct {
 	TokenSymbol  string // Token symbol (e.g., CTN, USDT)
 	TokenType    string // Token type (CBC20, CBC721)
 	TokenID      string // For CBC721 NFTs
+	TxHash       string // Transaction hash
+	NetworkID    int64  // Network ID (1 for mainnet, 3 for devnet)
 }
 
 // CheckForCTNTransfer checks if a transaction is a CTN transfer
 // This is kept for backward compatibility and subscription payment detection
-func CheckForCTNTransfer(tx *types.Transaction, CTNAddress string) ([]*Transfer, error) {
-	return CheckForCBC20Transfer(tx, CTNAddress, "CTN", 18)
+func CheckForCTNTransfer(tx *types.Transaction, CTNAddress string, networkID int64) ([]*Transfer, error) {
+	return CheckForCBC20Transfer(tx, CTNAddress, "CTN", 18, networkID)
 }
 
 // CheckForCBC20Transfer checks if a transaction is a CBC20 token transfer
-func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol string, decimals int) ([]*Transfer, error) {
+func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol string, decimals int, networkID int64) ([]*Transfer, error) {
+	txHash := tx.Hash().String()
 	signer := types.NewNucleusSigner(big.NewInt(int64(common.DefaultNetworkID)))
 
 	receiver := tx.To().Hex()
@@ -119,6 +122,8 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 				TokenAddress: tokenAddress,
 				TokenSymbol:  tokenSymbol,
 				TokenType:    "CBC20",
+				TxHash:       txHash,
+				NetworkID:    networkID,
 			},
 		}, nil
 	case batchTransfer:
@@ -165,6 +170,8 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 				TokenAddress: tokenAddress,
 				TokenSymbol:  tokenSymbol,
 				TokenType:    "CBC20",
+				TxHash:       txHash,
+				NetworkID:    networkID,
 			})
 		}
 		return transfers, nil
@@ -185,6 +192,8 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 				TokenAddress: tokenAddress,
 				TokenSymbol:  tokenSymbol,
 				TokenType:    "CBC20",
+				TxHash:       txHash,
+				NetworkID:    networkID,
 			},
 		}, nil
 	}
@@ -195,7 +204,8 @@ func CheckForCBC20Transfer(tx *types.Transaction, tokenAddress, tokenSymbol stri
 // CheckForCBC721Transfer checks if a transaction is a CBC721 (NFT) transfer
 // This function is kept for backward compatibility and for detecting transfers from input data
 // For proper event-based detection, use CheckForCBC721TransferFromReceipt instead
-func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol string) ([]*Transfer, error) {
+func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol string, networkID int64) ([]*Transfer, error) {
+	txHash := tx.Hash().String()
 	receiver := tx.To().Hex()
 	if receiver != tokenAddress {
 		return nil, nil
@@ -230,6 +240,8 @@ func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol str
 				TokenSymbol:  tokenSymbol,
 				TokenType:    "CBC721",
 				TokenID:      tokenID,
+				TxHash:       txHash,
+				NetworkID:    networkID,
 			},
 		}, nil
 	}
@@ -239,7 +251,7 @@ func CheckForCBC721Transfer(tx *types.Transaction, tokenAddress, tokenSymbol str
 
 // CheckForCBC721TransferFromReceipt parses transaction receipt logs for CBC721 Transfer events
 // This is the proper way to detect NFT transfers as they emit Transfer events
-func CheckForCBC721TransferFromReceipt(receipt *types.Receipt, tokenAddress, tokenSymbol string) ([]*Transfer, error) {
+func CheckForCBC721TransferFromReceipt(receipt *types.Receipt, tokenAddress, tokenSymbol string, txHash string, networkID int64) ([]*Transfer, error) {
 	if receipt == nil {
 		return nil, nil
 	}
@@ -305,6 +317,8 @@ func CheckForCBC721TransferFromReceipt(receipt *types.Receipt, tokenAddress, tok
 			TokenSymbol:  tokenSymbol,
 			TokenType:    "CBC721",
 			TokenID:      tokenIDHex,
+			TxHash:       txHash,
+			NetworkID:    networkID,
 		})
 	}
 
