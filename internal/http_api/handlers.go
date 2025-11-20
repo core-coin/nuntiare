@@ -94,7 +94,7 @@ func (s *HTTPServer) register(c *gin.Context) {
 			s.logger.Warn("OriginID mismatch for wallet update", "destination", req.Destination)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"success": false,
-				"error":   "Invalid origin_id",
+				"error":   "Invalid originid",
 			})
 			return
 		}
@@ -286,7 +286,7 @@ func (s *HTTPServer) cancel(c *gin.Context) {
 		s.logger.Warn("OriginID mismatch for wallet cancel", "destination", req.Destination)
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"error":   "Invalid origin_id",
+			"error":   "Invalid originid",
 		})
 		return
 	}
