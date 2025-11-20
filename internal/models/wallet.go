@@ -11,7 +11,7 @@ type Wallet struct {
 	// This identifies which wallet's subscription is being paid.
 	SubscriptionAddress string `json:"subscription_address" gorm:"column:subscription_address;index;unique"`
 	// OriginID is a unique identifier for authentication of update/cancel operations.
-	// Format: alphanumeric string, 34 characters (from crypto.randomUUID())
+	// Format: alphanumeric string, 32 characters (from crypto.randomUUID())
 	OriginID string `json:"originid" gorm:"column:originid;index;not null"`
 	// Network is the network the wallet is on. (xcb, btc etc.)
 	Network string `json:"network" gorm:"column:network"`

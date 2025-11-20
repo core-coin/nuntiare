@@ -13,7 +13,7 @@ import (
 // RegisterRequest represents the JSON body for wallet registration
 type RegisterRequest struct {
 	Origin      string `json:"origin" binding:"required"`
-	OriginID    string `json:"originid" binding:"required,min=34,max=34"` // Alphanumeric UUID, 34 chars
+	OriginID    string `json:"originid" binding:"required,min=32,max=32"` // Alphanumeric UUID, 32 chars
 	Subscriber  string `json:"subscriber" binding:"required"`
 	Destination string `json:"destination" binding:"required"`
 	Network     string `json:"network" binding:"required,oneof=xcb xab"`
