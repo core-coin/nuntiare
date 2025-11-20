@@ -11,8 +11,8 @@ type NotificationService interface {
 }
 
 type Notification struct {
-	Wallet       string  `json:"wallet"`        // Recipient address
-	From         string  `json:"from"`          // Sender address
+	Wallet       string  `json:"wallet"` // Recipient address
+	From         string  `json:"from"`   // Sender address
 	Amount       float64 `json:"amount"`
 	Currency     string  `json:"currency"`      // Token symbol (e.g., CTN, USDT, XCB)
 	TokenAddress string  `json:"token_address"` // Contract address (empty for XCB)
@@ -41,9 +41,9 @@ func (n *Notification) String() string {
 		if tokenIDBig, ok := new(big.Int).SetString(tokenIDStr, 16); ok {
 			tokenID = tokenIDBig.String() // Decimal representation
 		}
-		return fmt.Sprintf("Received NFT %v (ID: %v) from %v to address %v\nTX Hash: %v", n.Currency, tokenID, n.From, n.Wallet, txLink)
+		return fmt.Sprintf("Received NFT %v (ID: %v) from %v to address %v\nTransaction: %v", n.Currency, tokenID, n.From, n.Wallet, txLink)
 	}
 	// Format amount to avoid scientific notation and strip trailing zeros
 	amountStr := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.18f", n.Amount), "0"), ".")
-	return fmt.Sprintf("Received %v %v from %v to address %v\nTX Hash: %v", amountStr, n.Currency, n.From, n.Wallet, txLink)
+	return fmt.Sprintf("Received %v %v from %v to address %v\nTransaction: %v", amountStr, n.Currency, n.From, n.Wallet, txLink)
 }
