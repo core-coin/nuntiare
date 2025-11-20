@@ -34,7 +34,7 @@ type RegisterResponse struct {
 // CancelRequest represents the JSON body for canceling notifications
 type CancelRequest struct {
 	Destination string `json:"destination" binding:"required"`
-	OriginID    string `json:"origin_id" binding:"required"`
+	OriginID    string `json:"originid" binding:"required"`
 }
 
 // SubscriptionResponse represents the subscription status with expiration
