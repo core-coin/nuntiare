@@ -11,18 +11,24 @@ type NotificationService interface {
 }
 
 type Notification struct {
-	Wallet       string  `json:"wallet"` // Recipient address
-	From         string  `json:"from"`   // Sender address
-	Amount       float64 `json:"amount"`
-	Currency     string  `json:"currency"`      // Token symbol (e.g., CTN, USDT, XCB)
-	TokenAddress string  `json:"token_address"` // Contract address (empty for XCB)
-	TokenType    string  `json:"token_type"`    // CBC20, CBC721, or empty for native XCB
-	TokenID      string  `json:"token_id"`      // For NFT transfers (CBC721)
-	TxHash       string  `json:"tx_hash"`       // Transaction hash
-	NetworkID    int64   `json:"network_id"`    // Network ID (1 for mainnet, 3 for devnet)
+	Wallet        string  `json:"wallet"` // Recipient address
+	From          string  `json:"from"`   // Sender address
+	Amount        float64 `json:"amount"`
+	Currency      string  `json:"currency"`       // Token symbol (e.g., CTN, USDT, XCB)
+	TokenAddress  string  `json:"token_address"`  // Contract address (empty for XCB)
+	TokenType     string  `json:"token_type"`     // CBC20, CBC721, or empty for native XCB
+	TokenID       string  `json:"token_id"`       // For NFT transfers (CBC721)
+	TxHash        string  `json:"tx_hash"`        // Transaction hash
+	NetworkID     int64   `json:"network_id"`     // Network ID (1 for mainnet, 3 for devnet)
+	CustomMessage string  `json:"custom_message"` // Custom message overrides default formatting
 }
 
 func (n *Notification) String() string {
+	// If custom message is set, use it instead of default formatting
+	if n.CustomMessage != "" {
+		return n.CustomMessage
+	}
+
 	// Determine explorer base URL based on network ID
 	var explorerURL string
 	if n.NetworkID == 3 {

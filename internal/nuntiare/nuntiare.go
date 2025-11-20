@@ -744,6 +744,21 @@ func (n *Nuntiare) AddSubscriptionPaymentAndUpdatePaidStatus(
 	wallet.SubscriptionExpiresAt = newExpiresAt
 	wallet.Paid = true
 
+	// Send subscription activation notification
+	n.logger.Info("Sending subscription activation notification", "address", wallet.Address)
+	expiresAt := time.Unix(newExpiresAt, 0).UTC()
+	activationMessage := fmt.Sprintf("Your subscription for the address %s is now active.\nIt will remain valid until %s at %s.",
+		wallet.Address,
+		expiresAt.Format("2006-01-02"),
+		expiresAt.Format("15:04:05 MST"))
+	notification := &models.Notification{
+		Wallet:        wallet.Address,
+		CustomMessage: activationMessage,
+	}
+	n.safeGo(func() {
+		n.notificator.SendNotification(notification)
+	}, "subscriptionActivationNotification")
+
 	return nil
 }
 
